@@ -37,6 +37,9 @@ export type MiddlewareResult = Types.MiddlewareResult
 export type Validator = Types.Validator
 export type Connection = Types.Connection
 export type LogLevel = Types.LogLevel
+export type SecurityReport = Types.SecurityReport
+export type AuditEntry = Types.AuditEntry
+export type ViolationKind = Types.ViolationKind
 export type Signal<T...> = Signal.Signal<T...>
 
 local IS_SERVER = RunService:IsServer()
@@ -58,7 +61,7 @@ local Network = {}
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.4.0"
+Network.Version = "0.5.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -110,6 +113,37 @@ end
 ]=]
 function Network.Channel(name: string): Channel
 	return ChannelModule.get(name)
+end
+
+--[=[
+	@prop OnSuspiciousActivity Signal<SecurityReport>
+	@within Network
+	@server
+	Fires when a player's consecutive dropped packets (rate limit,
+	validation failure, malformed envelope) reach
+	`Config.RateLimit.PunishThreshold`. The package never kicks or bans on
+	its own — that decision is the game's, taken here:
+
+	```lua
+	Network.OnSuspiciousActivity:Connect(function(report)
+		warn(`{report.Player.Name}: {report.Kind} x{report.Strikes} on {report.Channel} — {report.Reason}`)
+		-- report.Player:Kick("Network abuse detected")
+	end)
+	```
+]=]
+Network.OnSuspiciousActivity = (
+	if IS_SERVER then ServerTransport.OnSuspiciousActivity else Signal.new()
+) :: Signal.Signal<SecurityReport>
+
+--[=[
+	@server
+	Returns the bounded security audit log (most recent 256 dropped-packet
+	entries, oldest first). Each entry: Time, UserId, PlayerName, Channel,
+	Event?, Kind, Reason.
+]=]
+function Network.GetAuditLog(): { AuditEntry }
+	assert(IS_SERVER, "GetAuditLog is server-only")
+	return ServerTransport.GetAuditLog()
 end
 
 --[=[

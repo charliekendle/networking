@@ -2,14 +2,14 @@
 
 Production-grade, type-safe networking for Roblox. Channels, middleware, validation, security, and debugging built in — installed with a single Wally dependency.
 
-> **Status: pre-release (0.4.x).** Foundation, transport, channels, and validation are complete — `Fire`/`On` works end-to-end on Global and isolated channels, with schema-validated packets auto-rejected server-side. Security (rate limiting, abuse detection) is next.
+> **Status: pre-release (0.5.x).** Foundation, transport, channels, validation, and security are complete — schema-validated, rate-limited packets end-to-end on Global and isolated channels, with abuse hooks and an audit log. Middleware is next.
 
 ## Installation
 
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@0.4.0"
+Networking = "charliekendle/networking@0.5.0"
 ```
 
 ```lua
@@ -44,7 +44,7 @@ end)
 
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (0.4.0)
+## Live API (0.5.0)
 
 ### Channels
 
@@ -63,6 +63,21 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 `Network.Validators`: `any` `boolean` `string` `number`* `numberRaw` `integer` `table` `buffer` `optional` `literal` `union` `array`(+max len) `dict` `interface` `strictInterface` `numberMin` `numberMax` `numberRange`* `integerRange` `stringMaxLength` `match` `enumItem` `instance` `instanceIsA` `vector3`* `vector2`* `cframe`* `color3` `udim2`* `custom`
 
 \* rejects NaN/±inf — exploiters cannot smuggle non-finite numbers through a validated event.
+
+### Security
+
+Every incoming packet runs the server pipeline **rate limit → envelope → schema → dispatch**; any drop is a strike, a clean packet resets strikes, and `PunishThreshold` consecutive strikes fires the hook. The package never kicks or bans on its own:
+
+```lua
+Network.OnSuspiciousActivity:Connect(function(report)
+	-- report: Player, Channel, Event?, Kind ("RateLimit"|"Validation"|"Envelope"), Reason, Strikes
+	report.Player:Kick("Network abuse detected")
+end)
+
+local entries = Network.GetAuditLog() -- most recent 256 drops, oldest first
+```
+
+Rate limiting is a token bucket per player **per channel** (defaults: 60 packets/s + 20 burst) — a flood on one channel can't starve legitimate traffic on another. All limits live-tunable via `Network.Configure`; gates: `SecurityEnabled`, `RateLimit.Enabled`. Violation logging is throttled to once per second per player.
 
 ### Global channel
 
@@ -126,7 +141,7 @@ Zero thread allocation for non-yielding handlers; a handler that errors never br
 - [x] **Step 2 — Core transport**: remote creation/discovery, envelope, `Fire`/`On`/`Once`/`Off`, `FireAll`/`FireExcept`/`FireList`, unreliable variants
 - [x] **Step 3 — Channels**: isolated channel instances with per-channel remotes
 - [x] **Step 4 — Validation**: schema validators (`t`-style), automatic packet rejection
-- [ ] **Step 5 — Security**: rate limiting, abuse detection, permissions, audit log, suspicious-activity hooks
+- [x] **Step 5 — Security**: rate limiting, abuse detection, audit log, suspicious-activity hooks (permissions middleware arrives with Step 6)
 - [ ] **Step 6 — Middleware**: global + per-channel chains
 - [ ] **Step 7 — Request/response**: `Invoke`, promises, timeouts, retries, cancellation
 - [ ] **Step 8 — Serialization & compression**: Roblox datatypes, buffers, optional compression

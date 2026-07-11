@@ -19,6 +19,8 @@ local Dispatcher = require(script.Parent.Parent.Shared.Core.Dispatcher)
 local Envelope = require(script.Parent.Parent.Shared.Core.Envelope)
 local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
 local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
+local RateLimiter = require(script.Parent.Parent.Shared.Security.RateLimiter)
+local SecurityMonitor = require(script.Parent.Parent.Shared.Security.SecurityMonitor)
 local Types = require(script.Parent.Parent.Shared.Types)
 local Log = require(script.Parent.Parent.Shared.Utilities.Log)
 
@@ -32,26 +34,56 @@ local function isPlayer(value: unknown): boolean
 end
 
 local function onIncoming(channelName: string, player: Player, eventName: unknown, ...: any)
-	if not Envelope.isValidEventName(eventName) then
-		Log.Warn("Dropped packet from %s on channel %q: invalid event name", player.Name, channelName)
-		return
-	end
+	local config = Config.Get()
+	local securityOn = config.SecurityEnabled
 
-	local validators = SchemaRegistry.get(channelName, eventName :: string)
-	if validators ~= nil and Config.Get().ValidationEnabled then
-		local ok, reason = SchemaRegistry.check(validators, ...)
-		if not ok then
-			Log.Warn(
-				"Rejected %q from %s on channel %q: %s",
-				eventName :: string,
-				player.Name,
-				channelName,
-				reason or "validation failed"
-			)
+	-- 1. Rate limit — cheapest check first, runs before any parsing.
+	if securityOn and config.RateLimit.Enabled then
+		if not RateLimiter.check(player, channelName) then
+			SecurityMonitor.reportViolation(player, channelName, nil, "RateLimit", "packet rate exceeded")
 			return
 		end
 	end
 
+	-- 2. Envelope — event name must be a sane string.
+	if not Envelope.isValidEventName(eventName) then
+		if securityOn then
+			SecurityMonitor.reportViolation(player, channelName, nil, "Envelope", "invalid event name")
+		else
+			Log.Warn("Dropped packet from %s on channel %q: invalid event name", player.Name, channelName)
+		end
+		return
+	end
+
+	-- 3. Schema validation.
+	local validators = SchemaRegistry.get(channelName, eventName :: string)
+	if validators ~= nil and config.ValidationEnabled then
+		local ok, reason = SchemaRegistry.check(validators, ...)
+		if not ok then
+			if securityOn then
+				SecurityMonitor.reportViolation(
+					player,
+					channelName,
+					eventName :: string,
+					"Validation",
+					reason or "validation failed"
+				)
+			else
+				Log.Warn(
+					"Rejected %q from %s on channel %q: %s",
+					eventName :: string,
+					player.Name,
+					channelName,
+					reason or "validation failed"
+				)
+			end
+			return
+		end
+	end
+
+	if securityOn then
+		SecurityMonitor.reportSuccess(player)
+	end
 	dispatcher:Fire(channelName, eventName :: string, player, ...)
 end
 
@@ -97,6 +129,20 @@ end
 function Transport.Off(channelName: string, eventName: string)
 	dispatcher:Off(channelName, eventName)
 end
+
+--[=[
+	@prop OnSuspiciousActivity Signal<SecurityReport>
+	@within ServerTransport
+	Re-exported SecurityMonitor hook. Fires when a player's consecutive
+	violations reach `Config.RateLimit.PunishThreshold`.
+]=]
+Transport.OnSuspiciousActivity = SecurityMonitor.OnSuspiciousActivity
+
+--[=[
+	Returns the bounded security audit log (most recent 256 entries,
+	oldest first). See SecurityMonitor.
+]=]
+Transport.GetAuditLog = SecurityMonitor.getAuditLog
 
 --[=[
 	Registers a positional argument schema for incoming `event` packets on

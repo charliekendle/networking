@@ -15,7 +15,7 @@ init.luau (public surface, context-aware)
     ├── Core/          Envelope, RemoteRegistry, Dispatcher (Step 2, done)
     ├── Channels/      Channel objects (Step 3, done)
     ├── Validation/    Validators + SchemaRegistry (Step 4, done)
-    ├── Security/      rate limiter, abuse detection (Step 5)
+    ├── Security/      RateLimiter + SecurityMonitor (Step 5, done)
     ├── Middleware/    chain runner + built-ins (Step 6)
     ├── Serialization/ datatype codecs (Step 8)
     ├── Compression/   optional payload compression (Step 8)
@@ -135,3 +135,29 @@ datatype validator reject them; `numberRaw` is the opt-out.
 **Registry is context-local.** The server's schemas validate client→server
 traffic — the security-critical direction. Client registration exists as a
 development aid and costs nothing when unused.
+
+## Step 5 design decisions
+
+**Rate limit runs first.** The pipeline is rate limit → envelope → schema →
+dispatch. The limiter is the cheapest check (one table lookup, a little
+arithmetic), so a flood is rejected before the server spends anything
+parsing it.
+
+**Token buckets are lazy.** Refill is computed from elapsed time on access —
+no per-frame upkeep loop, no cost for idle players, and capacity/rate read
+live from Config so an admin command can tighten limits mid-incident.
+
+**Strikes are consecutive, not cumulative.** A legitimate player who trips
+the limiter once during a lag spike resets to zero on their next clean
+packet. Only sustained abuse reaches the threshold, and the hook re-fires
+every N violations rather than once ever — so a game reacting with
+escalating punishment sees repeat offenses.
+
+**The package never punishes.** Kicking a paying player is a product
+decision. The library detects, drops, logs, and reports; the game decides in
+`OnSuspiciousActivity`.
+
+**The audit log is a ring buffer.** Fixed 256 entries, O(1) append, copied
+out on read. An exploiter cannot grow server memory by generating
+violations, and the log-throttle (1/sec/player) means they can't flood the
+console either.

@@ -3,7 +3,16 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.4.0] - Unreleased
+## [0.5.0] - Unreleased
+
+### Added — Step 5 (Security)
+- `RateLimiter` — token bucket per `(player, channel)`: capacity = `MaxPacketsPerSecond + BurstAllowance`, lazy refill, live-tunable via Config. Per-channel buckets mean spam on one channel can't starve another. Auto-cleanup on PlayerRemoving.
+- `SecurityMonitor` — consecutive-strike tracking (any dropped packet strikes; a clean packet resets), `OnSuspiciousActivity` hook firing every `PunishThreshold` violations, bounded 256-entry audit log (ring buffer), violation logging throttled to 1/sec/player so the limiter can't be turned into console spam.
+- Server receive pipeline is now: rate limit → envelope → schema validation → dispatch, with every drop reported. The package never kicks/bans on its own — punishment is the game's decision in the hook.
+- `Network.OnSuspiciousActivity` (server), `Network.GetAuditLog()` (server). Gates: `Config.SecurityEnabled` (master), `Config.RateLimit.Enabled`.
+- Specs: RateLimiter (4), SecurityMonitor (5) — 64 tests total. Playtest fires a 200-packet burst and reports how many passed.
+
+## [0.4.0] - 2026-07-11
 
 ### Added — Step 4 (Validation)
 - `Validators` — composable runtime validators: primitives (`boolean`/`string`/`number`/`integer`/`table`/`buffer`/`any`), combinators (`optional`/`literal`/`union`/`array`/`dict`/`interface`/`strictInterface`/`custom`), constraints (`numberRange`/`integerRange`/`numberMin`/`numberMax`/`stringMaxLength`/`match`), Roblox datatypes (`vector3`/`vector2`/`cframe`/`color3`/`udim2`/`enumItem`/`instance`/`instanceIsA`). `number` and all datatype validators reject NaN/±inf by design.

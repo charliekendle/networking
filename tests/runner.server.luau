@@ -12,6 +12,8 @@ local ok = TestKit.run({
 	Channel = require(script.Parent["Channel.spec"]) :: TestKit.Spec,
 	Validators = require(script.Parent["Validators.spec"]) :: TestKit.Spec,
 	SchemaRegistry = require(script.Parent["SchemaRegistry.spec"]) :: TestKit.Spec,
+	RateLimiter = require(script.Parent["RateLimiter.spec"]) :: TestKit.Spec,
+	SecurityMonitor = require(script.Parent["SecurityMonitor.spec"]) :: TestKit.Spec,
 })
 
 if not ok then

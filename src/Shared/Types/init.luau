@@ -103,6 +103,47 @@ export type Packet = {
 }
 
 --[=[
+	@type ViolationKind "RateLimit" | "Validation" | "Envelope"
+	@within Types
+]=]
+export type ViolationKind = "RateLimit" | "Validation" | "Envelope"
+
+--[=[
+	@interface SecurityReport
+	@within Types
+	Passed to OnSuspiciousActivity when a player crosses the punish threshold.
+	.Player Player
+	.Channel string
+	.Event string? -- nil when the event name itself was malformed
+	.Kind ViolationKind
+	.Reason string
+	.Strikes number -- consecutive violations at the moment of the report
+]=]
+export type SecurityReport = {
+	Player: Player,
+	Channel: string,
+	Event: string?,
+	Kind: ViolationKind,
+	Reason: string,
+	Strikes: number,
+}
+
+--[=[
+	@interface AuditEntry
+	@within Types
+	One row of the bounded security audit log.
+]=]
+export type AuditEntry = {
+	Time: number,
+	UserId: number,
+	PlayerName: string,
+	Channel: string,
+	Event: string?,
+	Kind: ViolationKind,
+	Reason: string,
+}
+
+--[=[
 	@type MiddlewareResult "Continue" | "Drop"
 	@within Types
 ]=]

@@ -31,6 +31,23 @@ Network.On("ValidatedPing", function(player, value)
 	print(`[PlayTest/Server] ValidatedPing {value} from {player.Name} — passed validation`)
 end)
 
+-- Security: count how much of a 200-packet spam burst actually gets through,
+-- and watch the suspicious-activity hook fire.
+local spamReceived = 0
+Network.On("Spam", function()
+	spamReceived += 1
+end)
+Network.On("SpamDone", function(player)
+	task.wait(0.5)
+	local audit = Network.GetAuditLog()
+	print(`[PlayTest/Server] Spam burst: {spamReceived}/200 passed the rate limiter; audit log has {#audit} entries`)
+end)
+
+Network.OnSuspiciousActivity:Connect(function(report)
+	print(`[PlayTest/Server] SUSPICIOUS: {report.Player.Name} {report.Kind} x{report.Strikes} on {report.Channel} — {report.Reason}`)
+	-- A real game might kick here: report.Player:Kick("Network abuse")
+end)
+
 Players.PlayerAdded:Connect(function(player)
 	task.wait(1)
 	Network.FireAll("Announce", `Welcome {player.Name}`)
