@@ -61,7 +61,7 @@ local Network = {}
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.5.0"
+Network.Version = "0.6.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -144,6 +144,27 @@ Network.OnSuspiciousActivity = (
 function Network.GetAuditLog(): { AuditEntry }
 	assert(IS_SERVER, "GetAuditLog is server-only")
 	return ServerTransport.GetAuditLog()
+end
+
+--[=[
+	Registers **global** inbound middleware — runs for every channel, before
+	any per-channel chain. Runs after rate limiting and schema validation,
+	immediately before dispatch. Return "Drop" to reject, "Continue" to pass
+	(optionally with a replacement packet). Errors drop the packet (fail
+	closed). Returns a Connection.
+
+	```lua
+	Network.Use(function(packet)
+		print(`{packet.Kind} {packet.Channel}/{packet.Event} ({packet.ArgCount} args)`)
+		return "Continue"
+	end)
+	```
+]=]
+function Network.Use(middleware: Middleware): Connection
+	if IS_SERVER then
+		return ServerTransport.Use(nil, middleware)
+	end
+	return ClientTransport.Use(nil, middleware)
 end
 
 --[=[

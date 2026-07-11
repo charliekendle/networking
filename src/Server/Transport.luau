@@ -19,6 +19,7 @@ local Dispatcher = require(script.Parent.Parent.Shared.Core.Dispatcher)
 local Envelope = require(script.Parent.Parent.Shared.Core.Envelope)
 local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
 local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
+local MiddlewareRegistry = require(script.Parent.Parent.Shared.Middleware.MiddlewareRegistry)
 local RateLimiter = require(script.Parent.Parent.Shared.Security.RateLimiter)
 local SecurityMonitor = require(script.Parent.Parent.Shared.Security.SecurityMonitor)
 local Types = require(script.Parent.Parent.Shared.Types)
@@ -33,7 +34,7 @@ local function isPlayer(value: unknown): boolean
 	return typeof(value) == "Instance" and (value :: Instance):IsA("Player")
 end
 
-local function onIncoming(channelName: string, player: Player, eventName: unknown, ...: any)
+local function onIncoming(channelName: string, kind: Types.PacketKind, player: Player, eventName: unknown, ...: any)
 	local config = Config.Get()
 	local securityOn = config.SecurityEnabled
 
@@ -84,6 +85,27 @@ local function onIncoming(channelName: string, player: Player, eventName: unknow
 	if securityOn then
 		SecurityMonitor.reportSuccess(player)
 	end
+
+	-- 4. Middleware (global then channel chain). Packet allocation only
+	-- happens when at least one middleware is registered.
+	if MiddlewareRegistry.hasAny(channelName) then
+		local packet: Types.Packet = {
+			Channel = channelName,
+			Event = eventName :: string,
+			Args = table.pack(...) :: any,
+			ArgCount = select("#", ...),
+			Player = player,
+			Kind = kind,
+			Timestamp = os.clock(),
+		}
+		local result = MiddlewareRegistry.run(packet)
+		if result == nil then
+			return
+		end
+		dispatcher:Fire(result.Channel, result.Event, player, table.unpack(result.Args :: any, 1, result.ArgCount))
+		return
+	end
+
 	dispatcher:Fire(channelName, eventName :: string, player, ...)
 end
 
@@ -96,10 +118,10 @@ function Transport.BindChannel(channelName: string): RemoteRegistry.ChannelRemot
 	if not boundChannels[channelName] then
 		boundChannels[channelName] = true
 		remotes.Reliable.OnServerEvent:Connect(function(player, eventName, ...)
-			onIncoming(channelName, player, eventName, ...)
+			onIncoming(channelName, "Event", player, eventName, ...)
 		end)
 		remotes.Unreliable.OnServerEvent:Connect(function(player, eventName, ...)
-			onIncoming(channelName, player, eventName, ...)
+			onIncoming(channelName, "UnreliableEvent", player, eventName, ...)
 		end)
 	end
 	return remotes
@@ -143,6 +165,15 @@ Transport.OnSuspiciousActivity = SecurityMonitor.OnSuspiciousActivity
 	oldest first). See SecurityMonitor.
 ]=]
 Transport.GetAuditLog = SecurityMonitor.getAuditLog
+
+--[=[
+	Registers inbound middleware. `channelName = nil` → global (all
+	channels). Runs after rate limiting and validation, before dispatch.
+	Returns a Connection.
+]=]
+function Transport.Use(channelName: string?, middleware: Types.Middleware): MiddlewareRegistry.Connection
+	return MiddlewareRegistry.use(channelName, middleware)
+end
 
 --[=[
 	Registers a positional argument schema for incoming `event` packets on

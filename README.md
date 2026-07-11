@@ -2,14 +2,14 @@
 
 Production-grade, type-safe networking for Roblox. Channels, middleware, validation, security, and debugging built in — installed with a single Wally dependency.
 
-> **Status: pre-release (0.5.x).** Foundation, transport, channels, validation, and security are complete — schema-validated, rate-limited packets end-to-end on Global and isolated channels, with abuse hooks and an audit log. Middleware is next.
+> **Status: pre-release (0.6.x).** Foundation, transport, channels, validation, security, and middleware are complete. Request/response (Invoke + promises) is next.
 
 ## Installation
 
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@0.5.0"
+Networking = "charliekendle/networking@0.6.0"
 ```
 
 ```lua
@@ -44,7 +44,7 @@ end)
 
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (0.5.0)
+## Live API (0.6.0)
 
 ### Channels
 
@@ -55,6 +55,7 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 | `channel:Fire/FireUnreliable` | both | Server: `(player, event, ...)`. Client: `(event, ...)`. |
 | `channel:FireAll/FireAllUnreliable/FireExcept/FireList` | server | Broadcast family, scoped to the channel. |
 | `channel:Expect(event, ...validators)` | both | Positional schema for incoming packets; failures dropped + logged before handlers. Register server-side for security. |
+| `channel:Use(middleware)` | both | Inbound middleware scoped to the channel. |
 
 ### Validation
 
@@ -64,9 +65,29 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 
 \* rejects NaN/±inf — exploiters cannot smuggle non-finite numbers through a validated event.
 
+### Middleware
+
+`Network.Use(fn)` registers a global inbound middleware (every channel); `channel:Use(fn)` scopes one. Order: global chain (registration order), then the channel chain. A middleware receives a `Packet` (`Channel`, `Event`, `Args`, `ArgCount`, `Player?`, `Kind`, `Timestamp`) and returns a verdict:
+
+```lua
+Combat:Use(function(packet)
+	if packet.Player and not canFight(packet.Player) then
+		return "Drop" -- permission gate: packet never reaches handlers
+	end
+	return "Continue"
+end)
+
+Combat:Use(function(packet)
+	packet.Args[1] = math.floor(packet.Args[1] :: any)
+	return "Continue", packet -- transform: replacement flows downstream
+end)
+```
+
+Middleware that errors (or returns garbage) **drops the packet — fail closed**. A crashed permission check never fails open. Unused middleware costs nothing: the pipeline skips Packet allocation entirely when no chain applies.
+
 ### Security
 
-Every incoming packet runs the server pipeline **rate limit → envelope → schema → dispatch**; any drop is a strike, a clean packet resets strikes, and `PunishThreshold` consecutive strikes fires the hook. The package never kicks or bans on its own:
+Every incoming packet runs the server pipeline **rate limit → envelope → schema → middleware → dispatch**; any drop is a strike, a clean packet resets strikes, and `PunishThreshold` consecutive strikes fires the hook. The package never kicks or bans on its own:
 
 ```lua
 Network.OnSuspiciousActivity:Connect(function(report)
@@ -142,7 +163,7 @@ Zero thread allocation for non-yielding handlers; a handler that errors never br
 - [x] **Step 3 — Channels**: isolated channel instances with per-channel remotes
 - [x] **Step 4 — Validation**: schema validators (`t`-style), automatic packet rejection
 - [x] **Step 5 — Security**: rate limiting, abuse detection, audit log, suspicious-activity hooks (permissions middleware arrives with Step 6)
-- [ ] **Step 6 — Middleware**: global + per-channel chains
+- [x] **Step 6 — Middleware**: global + per-channel chains, transforms, fail-closed error handling
 - [ ] **Step 7 — Request/response**: `Invoke`, promises, timeouts, retries, cancellation
 - [ ] **Step 8 — Serialization & compression**: Roblox datatypes, buffers, optional compression
 - [ ] **Step 9 — Spatial fire**: `FireNearby`, `FireWithinRadius`

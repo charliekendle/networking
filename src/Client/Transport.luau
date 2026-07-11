@@ -18,6 +18,7 @@ local Config = require(script.Parent.Parent.Shared.Config)
 local Dispatcher = require(script.Parent.Parent.Shared.Core.Dispatcher)
 local Envelope = require(script.Parent.Parent.Shared.Core.Envelope)
 local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
+local MiddlewareRegistry = require(script.Parent.Parent.Shared.Middleware.MiddlewareRegistry)
 local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
 local Types = require(script.Parent.Parent.Shared.Types)
 local Log = require(script.Parent.Parent.Shared.Utilities.Log)
@@ -27,7 +28,7 @@ local Transport = {}
 local dispatcher = Dispatcher.new()
 local bindStarted: { [string]: boolean } = {}
 
-local function onIncoming(channelName: string, eventName: unknown, ...: any)
+local function onIncoming(channelName: string, kind: Types.PacketKind, eventName: unknown, ...: any)
 	if not Envelope.isValidEventName(eventName) then
 		Log.Warn("Dropped packet from server on channel %q: invalid event name", channelName)
 		return
@@ -45,6 +46,24 @@ local function onIncoming(channelName: string, eventName: unknown, ...: any)
 			)
 			return
 		end
+	end
+
+	if MiddlewareRegistry.hasAny(channelName) then
+		local packet: Types.Packet = {
+			Channel = channelName,
+			Event = eventName :: string,
+			Args = table.pack(...) :: any,
+			ArgCount = select("#", ...),
+			Player = nil,
+			Kind = kind,
+			Timestamp = os.clock(),
+		}
+		local result = MiddlewareRegistry.run(packet)
+		if result == nil then
+			return
+		end
+		dispatcher:Fire(result.Channel, result.Event, table.unpack(result.Args :: any, 1, result.ArgCount))
+		return
 	end
 
 	dispatcher:Fire(channelName, eventName :: string, ...)
@@ -69,10 +88,10 @@ function Transport.BindChannel(channelName: string)
 			return
 		end
 		remotes.Reliable.OnClientEvent:Connect(function(eventName, ...)
-			onIncoming(channelName, eventName, ...)
+			onIncoming(channelName, "Event", eventName, ...)
 		end)
 		remotes.Unreliable.OnClientEvent:Connect(function(eventName, ...)
-			onIncoming(channelName, eventName, ...)
+			onIncoming(channelName, "UnreliableEvent", eventName, ...)
 		end)
 	end)
 end
@@ -113,6 +132,14 @@ end
 ]=]
 function Transport.Off(channelName: string, eventName: string)
 	dispatcher:Off(channelName, eventName)
+end
+
+--[=[
+	Registers inbound middleware (server→client direction).
+	`channelName = nil` → global. Returns a Connection.
+]=]
+function Transport.Use(channelName: string?, middleware: Types.Middleware): MiddlewareRegistry.Connection
+	return MiddlewareRegistry.use(channelName, middleware)
 end
 
 --[=[

@@ -29,6 +29,17 @@ for count = 1, 3 do
 end
 Network.FireUnreliable("UnreliablePing", 1)
 
+-- Middleware demo: server-side Combat middleware adds +100 before the
+-- handler; expect MwPong 101 back.
+Combat:On("MwPong", function(value)
+	if value == 101 then
+		print(`[PlayTest/Client] MwPong {value} received — MIDDLEWARE TRANSFORM OK`)
+	else
+		warn(`[PlayTest/Client] MwPong {value} received — expected 101!`)
+	end
+end)
+Combat:Fire("MwPing", 1)
+
 -- Validation demo: only the first should reach the server handler.
 -- The other three must produce "Rejected" warns server-side and nothing else.
 Network.Fire("ValidatedPing", 5)          -- valid

@@ -46,6 +46,7 @@ export type Channel = {
 	Name: string,
 
 	Expect: (self: Channel, eventName: string, ...Types.Validator) -> (),
+	Use: (self: Channel, middleware: Types.Middleware) -> Connection,
 	On: (self: Channel, eventName: string, callback: (...any) -> ()) -> Connection,
 	Once: (self: Channel, eventName: string, callback: (...any) -> ()) -> Connection,
 	Off: (self: Channel, eventName: string) -> (),
@@ -77,6 +78,25 @@ ChannelClass.__index = ChannelClass
 ]=]
 function ChannelClass.Expect(self: any, eventName: string, ...: Types.Validator)
 	Transport.Expect(self.Name, eventName, { ... })
+end
+
+--[=[
+	Registers inbound middleware scoped to this channel. Runs after the
+	global chain, after rate limiting and validation, before dispatch.
+	Return "Drop" to reject a packet, or "Continue" (optionally with a
+	replacement packet) to pass it on. Errors drop the packet (fail closed).
+
+	```lua
+	Combat:Use(function(packet)
+		if packet.Player and not canFight(packet.Player) then
+			return "Drop"
+		end
+		return "Continue"
+	end)
+	```
+]=]
+function ChannelClass.Use(self: any, middleware: Types.Middleware): Connection
+	return Transport.Use(self.Name, middleware)
 end
 
 --[=[

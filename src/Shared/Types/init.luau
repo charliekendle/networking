@@ -97,6 +97,7 @@ export type Packet = {
 	Channel: string,
 	Event: string,
 	Args: { unknown },
+	ArgCount: number, -- authoritative length of Args (trailing nils preserved)
 	Player: Player?,
 	Kind: PacketKind,
 	Timestamp: number,

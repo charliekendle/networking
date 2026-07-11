@@ -16,7 +16,7 @@ init.luau (public surface, context-aware)
     ├── Channels/      Channel objects (Step 3, done)
     ├── Validation/    Validators + SchemaRegistry (Step 4, done)
     ├── Security/      RateLimiter + SecurityMonitor (Step 5, done)
-    ├── Middleware/    chain runner + built-ins (Step 6)
+    ├── Middleware/    MiddlewareRegistry (Step 6, done)
     ├── Serialization/ datatype codecs (Step 8)
     ├── Compression/   optional payload compression (Step 8)
     └── Debug/         inspector, stats, monitor (Step 10)
@@ -161,3 +161,24 @@ decision. The library detects, drops, logs, and reports; the game decides in
 out on read. An exploiter cannot grow server memory by generating
 violations, and the log-throttle (1/sec/player) means they can't flood the
 console either.
+
+## Step 6 design decisions
+
+**Middleware runs last before dispatch.** Rate limiting and validation are
+mechanical, cheap, and universally wanted — they run first and don't need
+the flexibility (or cost) of user chains. Middleware is where *game logic*
+gates live (permissions, auth, feature flags, transforms), so it sees only
+packets that already passed the mechanical checks.
+
+**Fail closed.** A middleware that errors, or returns anything other than
+"Continue"/"Drop", drops the packet with an Error log. The alternative —
+failing open — turns any bug in a permission check into a security hole.
+
+**Zero cost when unused.** The Packet struct is only allocated when
+`hasAny(channel)` is true. Games that never call Use pay one boolean check
+per packet.
+
+**Replacement, not mutation contract.** Middleware may mutate the packet it
+received and/or return a replacement with "Continue"; whatever comes back
+flows downstream and into dispatch (unpacked by ArgCount, so transforms may
+produce trailing nils safely).

@@ -3,7 +3,16 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.5.0] - Unreleased
+## [0.6.0] - Unreleased
+
+### Added — Step 6 (Middleware)
+- `MiddlewareRegistry` — ordered inbound chains, global and per-channel. Execution: global (registration order) → channel chain. Verdicts: `"Continue"` (optionally with a replacement packet, which flows downstream) or `"Drop"`. Errors and invalid verdicts **fail closed** (packet dropped + Error log) — a crashed permission check never fails open.
+- `Network.Use(middleware)` (global) / `channel:Use(middleware)` (scoped) on both contexts; returns a Connection, safe to disconnect mid-run.
+- Pipeline is now rate limit → envelope → schema → **middleware** → dispatch. Packet structs (`Channel/Event/Args/ArgCount/Player/Kind/Timestamp`) are only allocated when at least one middleware is registered — unused middleware costs zero.
+- Packets now carry `Kind` ("Event" vs "UnreliableEvent") end-to-end; `Types.Packet` gained `ArgCount` (authoritative arg length, trailing nils preserved).
+- Specs: Middleware (7) — 71 tests total. Playtest adds a +100 transform on Combat (`MIDDLEWARE TRANSFORM OK`) and a global packet counter.
+
+## [0.5.0] - 2026-07-11
 
 ### Added — Step 5 (Security)
 - `RateLimiter` — token bucket per `(player, channel)`: capacity = `MaxPacketsPerSecond + BurstAllowance`, lazy refill, live-tunable via Config. Per-channel buckets mean spam on one channel can't starve another. Auto-cleanup on PlayerRemoving.

@@ -14,6 +14,7 @@ local ok = TestKit.run({
 	SchemaRegistry = require(script.Parent["SchemaRegistry.spec"]) :: TestKit.Spec,
 	RateLimiter = require(script.Parent["RateLimiter.spec"]) :: TestKit.Spec,
 	SecurityMonitor = require(script.Parent["SecurityMonitor.spec"]) :: TestKit.Spec,
+	Middleware = require(script.Parent["Middleware.spec"]) :: TestKit.Spec,
 })
 
 if not ok then

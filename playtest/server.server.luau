@@ -31,6 +31,28 @@ Network.On("ValidatedPing", function(player, value)
 	print(`[PlayTest/Server] ValidatedPing {value} from {player.Name} — passed validation`)
 end)
 
+-- Middleware: global observer counts every dispatched packet; a Combat
+-- middleware transforms MwPing's first arg (+100) before the handler.
+local packetsSeen = 0
+Network.Use(function(packet)
+	packetsSeen += 1
+	return "Continue"
+end)
+
+Combat:Use(function(packet)
+	if packet.Event == "MwPing" then
+		packet.Args[1] = (packet.Args[1] :: number) + 100
+		return "Continue", packet
+	end
+	return "Continue"
+end)
+
+Combat:Expect("MwPing", V.number)
+Combat:On("MwPing", function(player, value)
+	print(`[PlayTest/Server] MwPing arrived as {value} (middleware added +100)`)
+	Combat:Fire(player, "MwPong", value)
+end)
+
 -- Security: count how much of a 200-packet spam burst actually gets through,
 -- and watch the suspicious-activity hook fire.
 local spamReceived = 0
@@ -41,6 +63,7 @@ Network.On("SpamDone", function(player)
 	task.wait(0.5)
 	local audit = Network.GetAuditLog()
 	print(`[PlayTest/Server] Spam burst: {spamReceived}/200 passed the rate limiter; audit log has {#audit} entries`)
+	print(`[PlayTest/Server] Global middleware observed {packetsSeen} dispatched packets total`)
 end)
 
 Network.OnSuspiciousActivity:Connect(function(report)
