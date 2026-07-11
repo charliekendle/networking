@@ -6,7 +6,15 @@
             "Networking": { "$path": "src" }
         },
         "ServerScriptService": {
-            "Tests": { "$path": "tests" }
+            "Tests": { "$path": "tests" },
+            "PlayTest": { "$path": "playtest/server.server.luau" }
+        },
+        "StarterPlayer": {
+            "$className": "StarterPlayer",
+            "StarterPlayerScripts": {
+                "$className": "StarterPlayerScripts",
+                "PlayTest": { "$path": "playtest/client.client.luau" }
+            }
         }
     }
 }

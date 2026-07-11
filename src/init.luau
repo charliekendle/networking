@@ -2,19 +2,25 @@
 --[=[
 	@class Network
 
-	Package entry point. Context-aware: requiring this module on the server
-	exposes the server API, on the client the client API. Shared surface
-	(Configure, Signal, Types) is identical on both.
-
-	Step 1 exposes the foundation only. Core/Channels land in Step 2 and
-	extend this surface without breaking it.
+	Package entry point. Context-aware: the same require works on server and
+	client, with signatures differing where the contexts genuinely differ:
 
 	```lua
-	local Network = require(ReplicatedStorage.Packages.Networking)
+	-- Server
+	Network.On("Damage", function(player, amount) end)
+	Network.Fire(player, "Knockback", direction)
+	Network.FireAll("RoundStarted", roundId)
 
-	Network.Configure({ DebugMode = true })
+	-- Client
+	Network.On("Knockback", function(direction) end)
+	Network.Fire("Damage", 25)
 	```
+
+	These top-level functions operate on the built-in "Global" channel.
+	Isolated channels (`Network.Channel("Combat")`) land in Step 3.
 ]=]
+
+local RunService = game:GetService("RunService")
 
 local Config = require(script.Shared.Config)
 local Signal = require(script.Shared.Signals.Signal)
@@ -33,13 +39,21 @@ export type Connection = Types.Connection
 export type LogLevel = Types.LogLevel
 export type Signal<T...> = Signal.Signal<T...>
 
+local IS_SERVER = RunService:IsServer()
+local GLOBAL_CHANNEL = "Global"
+
+-- Context-conditional require: only the transport for the running context is
+-- loaded. Typed loosely here; the public wrappers below carry the real types.
+local ServerTransport = if IS_SERVER then require(script.Server.Transport) :: any else nil
+local ClientTransport = if not IS_SERVER then require(script.Client.Transport) :: any else nil
+
 local Network = {}
 
 --[=[
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.1.0"
+Network.Version = "0.2.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -66,6 +80,101 @@ end
 ]=]
 function Network.GetConfig(): NetworkConfig
 	return Config.Get()
+end
+
+--[=[
+	Listens for `event` on the Global channel.
+	Server callback: `(player: Player, ...args)`. Client callback: `(...args)`.
+	Never yields.
+]=]
+function Network.On(eventName: string, callback: (...any) -> ()): Connection
+	if IS_SERVER then
+		return ServerTransport.On(GLOBAL_CHANNEL, eventName, callback)
+	end
+	return ClientTransport.On(GLOBAL_CHANNEL, eventName, callback)
+end
+
+--[=[
+	Like On, but disconnects after the first packet.
+]=]
+function Network.Once(eventName: string, callback: (...any) -> ()): Connection
+	if IS_SERVER then
+		return ServerTransport.Once(GLOBAL_CHANNEL, eventName, callback)
+	end
+	return ClientTransport.Once(GLOBAL_CHANNEL, eventName, callback)
+end
+
+--[=[
+	Disconnects every listener of `event` on the Global channel.
+]=]
+function Network.Off(eventName: string)
+	if IS_SERVER then
+		ServerTransport.Off(GLOBAL_CHANNEL, eventName)
+	else
+		ClientTransport.Off(GLOBAL_CHANNEL, eventName)
+	end
+end
+
+--[=[
+	Reliable fire on the Global channel.
+	Server: `Network.Fire(player, eventName, ...)`.
+	Client: `Network.Fire(eventName, ...)` (may yield briefly on first use
+	of a channel while remotes are discovered).
+]=]
+function Network.Fire(...: any)
+	if IS_SERVER then
+		ServerTransport.Fire(GLOBAL_CHANNEL, ...)
+	else
+		ClientTransport.Fire(GLOBAL_CHANNEL, ...)
+	end
+end
+
+--[=[
+	Unreliable fire on the Global channel (may drop, never resent — use for
+	high-frequency cosmetic state). Same signatures as Fire.
+]=]
+function Network.FireUnreliable(...: any)
+	if IS_SERVER then
+		ServerTransport.FireUnreliable(GLOBAL_CHANNEL, ...)
+	else
+		ClientTransport.FireUnreliable(GLOBAL_CHANNEL, ...)
+	end
+end
+
+--[=[
+	@server
+	Reliable fire to every connected player.
+]=]
+function Network.FireAll(eventName: string, ...: any)
+	assert(IS_SERVER, "FireAll is server-only")
+	ServerTransport.FireAll(GLOBAL_CHANNEL, eventName, ...)
+end
+
+--[=[
+	@server
+	Unreliable fire to every connected player.
+]=]
+function Network.FireAllUnreliable(eventName: string, ...: any)
+	assert(IS_SERVER, "FireAllUnreliable is server-only")
+	ServerTransport.FireAllUnreliable(GLOBAL_CHANNEL, eventName, ...)
+end
+
+--[=[
+	@server
+	Reliable fire to every player except `excluded` (Player or {Player}).
+]=]
+function Network.FireExcept(excluded: Player | { Player }, eventName: string, ...: any)
+	assert(IS_SERVER, "FireExcept is server-only")
+	ServerTransport.FireExcept(GLOBAL_CHANNEL, excluded, eventName, ...)
+end
+
+--[=[
+	@server
+	Reliable fire to every player in `list`.
+]=]
+function Network.FireList(list: { Player }, eventName: string, ...: any)
+	assert(IS_SERVER, "FireList is server-only")
+	ServerTransport.FireList(GLOBAL_CHANNEL, list, eventName, ...)
 end
 
 Log.Debug("Networking v%s loaded", Network.Version)

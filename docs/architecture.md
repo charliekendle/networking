@@ -5,14 +5,14 @@
 ```
 init.luau (public surface, context-aware)
 │
-├── Server/            server transport + server-only API (Step 2+)
-├── Client/            client transport + client-only API (Step 2+)
+├── Server/            Transport: bind + Fire family (Step 2, done)
+├── Client/            Transport: non-blocking On, discovering Fire (Step 2, done)
 └── Shared/
     ├── Types/         all public types, single source of truth
     ├── Config/        centralized runtime config + Changed signal
     ├── Signals/       Signal implementation (thread-reusing)
     ├── Utilities/     Log, TableUtil
-    ├── Core/          packet envelope, remote registry (Step 2)
+    ├── Core/          Envelope, RemoteRegistry, Dispatcher (Step 2, done)
     ├── Channels/      channel objects (Step 3)
     ├── Validation/    schema validators (Step 4)
     ├── Security/      rate limiter, abuse detection (Step 5)
@@ -64,3 +64,31 @@ by the client via `WaitForChild`. One RemoteEvent + one UnreliableRemoteEvent +
 one RemoteFunction **per channel**, multiplexing events by name inside the
 packet envelope — not one Instance per event. Fewer instances, cheaper
 discovery, and event names become data (validatable, rate-limitable per name).
+
+## Step 2 design decisions
+
+**Event name rides as the first vararg.** The wire format is
+`(eventName, ...args)` — no per-packet wrapper table, so the hot path adds
+zero allocations on top of Roblox's own serialization. The envelope module
+owns the naming rules; both transports drop (and log) any incoming packet
+whose first argument fails them, so garbage from exploiters never reaches
+a dispatcher signal.
+
+**`__` prefix is reserved.** User code cannot register or fire events starting
+with `__`. The Invoke step will carry request/response correlation on
+`__invoke`/`__reply` without ever colliding with game events.
+
+**Dispatcher is pure bookkeeping.** It knows nothing about remotes, players,
+or contexts — just `(channel, event) → Signal`. That's what makes routing
+fully unit-testable without an engine client.
+
+**Client listeners never yield; client fires may.** `On` must be callable at
+require time in LocalScripts without stalling module loading, so receive-path
+binding happens in a background task once the server's remotes replicate.
+`Fire` has to actually deliver, so it waits — bounded by
+`Config.DefaultTimeout` — and drops with a loud error log if the server never
+created the channel, instead of hanging forever.
+
+**Idempotent instance adoption.** `RemoteRegistry` adopts existing instances
+of the right class instead of erroring or duplicating, so hot-reload
+(Rojo re-sync) and multiple require paths converge on the same remotes.
