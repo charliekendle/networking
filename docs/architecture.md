@@ -13,7 +13,7 @@ init.luau (public surface, context-aware)
     ├── Signals/       Signal implementation (thread-reusing)
     ├── Utilities/     Log, TableUtil
     ├── Core/          Envelope, RemoteRegistry, Dispatcher (Step 2, done)
-    ├── Channels/      channel objects (Step 3)
+    ├── Channels/      Channel objects (Step 3, done)
     ├── Validation/    schema validators (Step 4)
     ├── Security/      rate limiter, abuse detection (Step 5)
     ├── Middleware/    chain runner + built-ins (Step 6)
@@ -92,3 +92,22 @@ created the channel, instead of hanging forever.
 **Idempotent instance adoption.** `RemoteRegistry` adopts existing instances
 of the right class instead of erroring or duplicating, so hot-reload
 (Rojo re-sync) and multiple require paths converge on the same remotes.
+
+## Step 3 design decisions
+
+**Channels are memoized, not constructed.** `Network.Channel("Combat")` from
+any script returns the same object. Games never need their own channel
+registry module, and two systems referencing the same name can't accidentally
+create parallel state.
+
+**Server access is eager, client access is lazy.** Merely referencing a
+channel server-side creates its remotes, so any client that can require the
+code can discover them — no "fired before the server made the channel" races
+in normal usage. On the client, nothing yields until the first listener or
+fire.
+
+**Channel objects are thin.** All state (dispatch tables, remote caches,
+bound flags) lives in the transports keyed by channel name; the Channel
+object is just a name plus method sugar. Middleware/validation/rate-limit
+scoping in later steps attaches to the name, which means it works identically
+through `Network.Fire` and `channel:Fire`.

@@ -16,8 +16,8 @@
 	Network.Fire("Damage", 25)
 	```
 
-	These top-level functions operate on the built-in "Global" channel.
-	Isolated channels (`Network.Channel("Combat")`) land in Step 3.
+	Top-level Fire/On operate on the built-in "Global" channel. Isolated
+	channels with the same surface: `Network.Channel("Combat")`.
 ]=]
 
 local RunService = game:GetService("RunService")
@@ -47,13 +47,16 @@ local GLOBAL_CHANNEL = "Global"
 local ServerTransport = if IS_SERVER then require(script.Server.Transport) :: any else nil
 local ClientTransport = if not IS_SERVER then require(script.Client.Transport) :: any else nil
 
+local ChannelModule = require(script.Shared.Channels.Channel)
+export type Channel = ChannelModule.Channel
+
 local Network = {}
 
 --[=[
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.2.0"
+Network.Version = "0.3.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -80,6 +83,24 @@ end
 ]=]
 function Network.GetConfig(): NetworkConfig
 	return Config.Get()
+end
+
+--[=[
+	Returns the isolated channel with this name, creating it on first access.
+	Memoized — the same name always returns the same object:
+
+	```lua
+	local Combat = Network.Channel("Combat")
+	Combat:On("Damage", function(player, amount) end)
+	Combat:Fire(player, "Knockback", direction)
+	```
+
+	Events are scoped to their channel: "Ping" on Combat and "Ping" on
+	Trading never interact. On the server, referencing a channel creates its
+	remotes immediately; on the client, discovery defers to first use.
+]=]
+function Network.Channel(name: string): Channel
+	return ChannelModule.get(name)
 end
 
 --[=[

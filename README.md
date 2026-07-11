@@ -2,14 +2,14 @@
 
 Production-grade, type-safe networking for Roblox. Channels, middleware, validation, security, and debugging built in — installed with a single Wally dependency.
 
-> **Status: pre-release (0.2.x).** Foundation and core transport are complete — `Fire`/`On` works end-to-end server↔client on the built-in Global channel, reliable and unreliable. Channels, validation, and security are next.
+> **Status: pre-release (0.3.x).** Foundation, core transport, and channels are complete — `Fire`/`On` works end-to-end server↔client, reliable and unreliable, on the Global channel and on isolated named channels. Validation and security are next.
 
 ## Installation
 
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@0.2.0"
+Networking = "charliekendle/networking@0.3.0"
 ```
 
 ```lua
@@ -20,25 +20,40 @@ local Network = require(ReplicatedStorage.Packages.Networking)
 
 ```lua
 -- Server
-Network.On("Damage", function(player, amount)
+local Combat = Network.Channel("Combat")
+
+Combat:On("Damage", function(player, amount)
 	-- event-name-sanitized before it reaches you; schema validation lands in Step 4
 end)
 
-Network.Fire(player, "Knockback", direction)
-Network.FireAll("RoundStarted", roundId)
+Combat:Fire(player, "Knockback", direction)
+Combat:FireAll("RoundStarted", roundId)
 ```
 
 ```lua
 -- Client
-Network.Fire("Damage", 25)
+local Combat = Network.Channel("Combat")
 
-Network.On("Knockback", function(direction)
+Combat:Fire("Damage", 25)
+
+Combat:On("Knockback", function(direction)
 end)
 ```
 
-Isolated channels (`Network.Channel("Combat")`) arrive in Step 3; the calls above run on the built-in `Global` channel.
+Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (0.2.0)
+## Live API (0.3.0)
+
+### Channels
+
+| Member | Context | Description |
+| --- | --- | --- |
+| `Network.Channel(name)` | both | Memoized channel accessor. Server: creates remotes eagerly. Client: discovery defers to first use. |
+| `channel:On/Once/Off` | both | Same semantics as the Global versions below, scoped to the channel. |
+| `channel:Fire/FireUnreliable` | both | Server: `(player, event, ...)`. Client: `(event, ...)`. |
+| `channel:FireAll/FireAllUnreliable/FireExcept/FireList` | server | Broadcast family, scoped to the channel. |
+
+### Global channel
 
 | Member | Context | Description |
 | --- | --- | --- |
@@ -98,7 +113,7 @@ Zero thread allocation for non-yielding handlers; a handler that errors never br
 
 - [x] **Step 1 — Foundation**: tooling, CI, `Types`, `Config`, `Signal`, `Log`, test harness
 - [x] **Step 2 — Core transport**: remote creation/discovery, envelope, `Fire`/`On`/`Once`/`Off`, `FireAll`/`FireExcept`/`FireList`, unreliable variants
-- [ ] **Step 3 — Channels**: isolated channel instances with per-channel remotes
+- [x] **Step 3 — Channels**: isolated channel instances with per-channel remotes
 - [ ] **Step 4 — Validation**: schema validators (`t`-style), automatic packet rejection
 - [ ] **Step 5 — Security**: rate limiting, abuse detection, permissions, audit log, suspicious-activity hooks
 - [ ] **Step 6 — Middleware**: global + per-channel chains

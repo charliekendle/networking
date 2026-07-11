@@ -3,7 +3,15 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.2.0] - Unreleased
+## [0.3.0] - Unreleased
+
+### Added — Step 3 (Channels)
+- `Channel` — isolated named channels with the full transport surface (`On`/`Once`/`Off`, `Fire`/`FireUnreliable`, server-only `FireAll`/`FireAllUnreliable`/`FireExcept`/`FireList`).
+- `Network.Channel(name)` — memoized accessor; same name returns the same object everywhere. Server access creates the channel's remotes eagerly so clients never race discovery.
+- Channel name validation (instance-safe, `__` reserved, 1–100 chars).
+- Channel spec (5 tests, 40 total); playtest extended to prove channel isolation (same event name on Global and Combat never cross).
+
+## [0.2.0] - 2026-07-11
 
 ### Added — Step 2 (Core transport)
 - `Envelope` — wire format rules: `(eventName, ...args)` positional, name length limits, `__` reserved prefix, channel-name instance safety.

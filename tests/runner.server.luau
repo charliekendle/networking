@@ -9,6 +9,7 @@ local ok = TestKit.run({
 	Dispatcher = require(script.Parent["Dispatcher.spec"]) :: TestKit.Spec,
 	RemoteRegistry = require(script.Parent["RemoteRegistry.spec"]) :: TestKit.Spec,
 	ServerTransport = require(script.Parent["ServerTransport.spec"]) :: TestKit.Spec,
+	Channel = require(script.Parent["Channel.spec"]) :: TestKit.Spec,
 })
 
 if not ok then

@@ -7,6 +7,7 @@ local Network = require(ReplicatedStorage.Networking)
 
 Network.Configure({ LogLevel = "Debug", DebugMode = true })
 
+-- Global channel round-trip
 Network.On("Ping", function(player, count)
 	print(`[PlayTest/Server] Ping {count} from {player.Name} — replying Pong`)
 	Network.Fire(player, "Pong", count)
@@ -14,6 +15,13 @@ end)
 
 Network.On("UnreliablePing", function(player, count)
 	print(`[PlayTest/Server] UnreliablePing {count} from {player.Name}`)
+end)
+
+-- Channel isolation: same event name ("Ping") on an isolated channel.
+local Combat = Network.Channel("Combat")
+Combat:On("Ping", function(player, value)
+	print(`[PlayTest/Server] Combat Ping from {player.Name} — replying on Combat only`)
+	Combat:Fire(player, "Pong", value * 2)
 end)
 
 Players.PlayerAdded:Connect(function(player)
