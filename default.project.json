@@ -1,0 +1,6 @@
+{
+    "name": "networking",
+    "tree": {
+        "$path": "src"
+    }
+}

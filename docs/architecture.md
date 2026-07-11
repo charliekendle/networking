@@ -1,0 +1,66 @@
+# Architecture Overview
+
+## Layering
+
+```
+init.luau (public surface, context-aware)
+│
+├── Server/            server transport + server-only API (Step 2+)
+├── Client/            client transport + client-only API (Step 2+)
+└── Shared/
+    ├── Types/         all public types, single source of truth
+    ├── Config/        centralized runtime config + Changed signal
+    ├── Signals/       Signal implementation (thread-reusing)
+    ├── Utilities/     Log, TableUtil
+    ├── Core/          packet envelope, remote registry (Step 2)
+    ├── Channels/      channel objects (Step 3)
+    ├── Validation/    schema validators (Step 4)
+    ├── Security/      rate limiter, abuse detection (Step 5)
+    ├── Middleware/    chain runner + built-ins (Step 6)
+    ├── Serialization/ datatype codecs (Step 8)
+    ├── Compression/   optional payload compression (Step 8)
+    └── Debug/         inspector, stats, monitor (Step 10)
+```
+
+Dependency rule: arrows point downward only. `Shared/*` modules never require
+`Server/` or `Client/`. `Types` has zero requires. `Config` requires only
+`Types`, `TableUtil`, `Signal`. This keeps the graph acyclic and every module
+unit-testable in isolation.
+
+## Step 1 design decisions
+
+**Types is a single module.** Public types live in `Shared/Types` and are
+re-exported from `init.luau`. Consumers write `Networking.Packet`, never reach
+into internals. Internal-only types stay in their owning module.
+
+**Config is data, not behaviour.** Subsystems read `Config.Get()` at the point
+of use (or subscribe to `Config.Changed`) instead of caching flags at require
+time. That makes every option live-tunable — including from an admin command
+in a running server.
+
+**Config rejects unknown keys.** A typo like `ValiationEnabled = false`
+errors immediately instead of silently doing nothing. Snapshots from
+`Config.Get()` are deep-frozen so no consumer can mutate shared state.
+
+**Signal reuses one runner thread.** Firing a non-yielding handler costs zero
+thread allocations (the pattern popularised by GoodSignal). This matters
+because Step 2 dispatches every incoming packet through signals — at thousands
+of packets/sec, per-fire thread allocation is measurable GC pressure. Handler
+errors are isolated per-handler via `task.spawn` semantics.
+
+**Log is level-gated through Config.** The library never prints in production
+by default (`LogLevel = "Warn"`), and can be fully silenced (`"None"`) or
+opened up (`"Debug"`) without touching library code.
+
+**Tests are harness-agnostic.** Spec modules are plain tables of
+`name -> function(expect)`. The tiny built-in `TestKit` runs them today;
+Jest-Lua can replace the runner later without rewriting specs.
+
+## Remote layout (Step 2 preview)
+
+All remotes live under one folder (`Config.RemoteFolderName`, default
+`_Networking`) in ReplicatedStorage, created lazily by the server, discovered
+by the client via `WaitForChild`. One RemoteEvent + one UnreliableRemoteEvent +
+one RemoteFunction **per channel**, multiplexing events by name inside the
+packet envelope — not one Instance per event. Fewer instances, cheaper
+discovery, and event names become data (validatable, rate-limitable per name).

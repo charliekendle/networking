@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: CompeyDev/setup-rokit@v0.1.2
+      - name: Verify tag matches wally.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          TOML=$(grep -m1 '^version' wally.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$TAG" != "$TOML" ]; then
+            echo "Tag $TAG does not match wally.toml version $TOML" && exit 1
+          fi
+      - name: Publish to Wally
+        env:
+          WALLY_TOKEN: ${{ secrets.WALLY_TOKEN }}
+        run: |
+          mkdir -p ~/.wally
+          printf '[tokens]\n"https://api.wally.run/" = "%s"\n' "$WALLY_TOKEN" > ~/.wally/auth.toml
+          wally publish
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

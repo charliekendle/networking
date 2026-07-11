@@ -1,0 +1,19 @@
+[package]
+name = "charliekendle/networking"
+version = "0.1.0"
+description = "Production-grade, type-safe networking library for Roblox. Channels, middleware, validation, security, and debugging built in."
+license = "MIT"
+authors = ["Charlie Kendle (https://github.com/charliekendle)"]
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+exclude = ["**"]
+include = [
+    "default.project.json",
+    "wally.toml",
+    "LICENSE",
+    "README.md",
+    "src",
+    "src/**",
+]
+
+[dev-dependencies]

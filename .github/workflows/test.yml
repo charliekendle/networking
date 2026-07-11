@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: CompeyDev/setup-rokit@v0.1.2
+      - name: Wally install
+        run: wally install
+      - name: Generate sourcemap
+        run: rojo sourcemap default.project.json --output sourcemap.json
+      - name: Luau strict analysis
+        run: |
+          curl -sLO https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts/globalTypes.d.luau
+          luau-lsp analyze --sourcemap sourcemap.json --definitions globalTypes.d.luau --ignore "Packages/**" src
+
+  # Runtime tests execute in-engine. Enabled once the Jest-Lua harness lands (Testing step).
+  # unit-tests:
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: CompeyDev/setup-rokit@v0.1.2
+  #     - run: wally install
+  #     - run: rojo build test.project.json --output test.rbxl
+  #     - run: run-in-roblox --place test.rbxl --script tests/runner.server.luau

@@ -1,0 +1,12 @@
+{
+    "name": "networking-tests",
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "Networking": { "$path": "src" }
+        },
+        "ServerScriptService": {
+            "Tests": { "$path": "tests" }
+        }
+    }
+}
