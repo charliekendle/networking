@@ -18,6 +18,8 @@ local Config = require(script.Parent.Parent.Shared.Config)
 local Dispatcher = require(script.Parent.Parent.Shared.Core.Dispatcher)
 local Envelope = require(script.Parent.Parent.Shared.Core.Envelope)
 local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
+local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
+local Types = require(script.Parent.Parent.Shared.Types)
 local Log = require(script.Parent.Parent.Shared.Utilities.Log)
 
 local Transport = {}
@@ -30,6 +32,21 @@ local function onIncoming(channelName: string, eventName: unknown, ...: any)
 		Log.Warn("Dropped packet from server on channel %q: invalid event name", channelName)
 		return
 	end
+
+	local validators = SchemaRegistry.get(channelName, eventName :: string)
+	if validators ~= nil and Config.Get().ValidationEnabled then
+		local ok, reason = SchemaRegistry.check(validators, ...)
+		if not ok then
+			Log.Warn(
+				"Rejected %q from server on channel %q: %s",
+				eventName :: string,
+				channelName,
+				reason or "validation failed"
+			)
+			return
+		end
+	end
+
 	dispatcher:Fire(channelName, eventName :: string, ...)
 end
 
@@ -96,6 +113,16 @@ end
 ]=]
 function Transport.Off(channelName: string, eventName: string)
 	dispatcher:Off(channelName, eventName)
+end
+
+--[=[
+	Registers a positional argument schema for incoming `event` packets on
+	this channel (server→client). Mainly a development aid on the client —
+	the security-critical direction is the server's registry.
+]=]
+function Transport.Expect(channelName: string, eventName: string, validators: { Types.Validator })
+	Envelope.assertEventName(eventName)
+	SchemaRegistry.set(channelName, eventName, validators)
 end
 
 --[=[

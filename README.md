@@ -2,14 +2,14 @@
 
 Production-grade, type-safe networking for Roblox. Channels, middleware, validation, security, and debugging built in — installed with a single Wally dependency.
 
-> **Status: pre-release (0.3.x).** Foundation, core transport, and channels are complete — `Fire`/`On` works end-to-end server↔client, reliable and unreliable, on the Global channel and on isolated named channels. Validation and security are next.
+> **Status: pre-release (0.4.x).** Foundation, transport, channels, and validation are complete — `Fire`/`On` works end-to-end on Global and isolated channels, with schema-validated packets auto-rejected server-side. Security (rate limiting, abuse detection) is next.
 
 ## Installation
 
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@0.3.0"
+Networking = "charliekendle/networking@0.4.0"
 ```
 
 ```lua
@@ -22,8 +22,10 @@ local Network = require(ReplicatedStorage.Packages.Networking)
 -- Server
 local Combat = Network.Channel("Combat")
 
+Combat:Expect("Damage", Network.Validators.numberRange(0, 100))
 Combat:On("Damage", function(player, amount)
-	-- event-name-sanitized before it reaches you; schema validation lands in Step 4
+	-- amount is guaranteed a finite number 0..100; anything else was
+	-- dropped (and logged) before this handler could run
 end)
 
 Combat:Fire(player, "Knockback", direction)
@@ -42,7 +44,7 @@ end)
 
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (0.3.0)
+## Live API (0.4.0)
 
 ### Channels
 
@@ -52,6 +54,15 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 | `channel:On/Once/Off` | both | Same semantics as the Global versions below, scoped to the channel. |
 | `channel:Fire/FireUnreliable` | both | Server: `(player, event, ...)`. Client: `(event, ...)`. |
 | `channel:FireAll/FireAllUnreliable/FireExcept/FireList` | server | Broadcast family, scoped to the channel. |
+| `channel:Expect(event, ...validators)` | both | Positional schema for incoming packets; failures dropped + logged before handlers. Register server-side for security. |
+
+### Validation
+
+`Network.Expect(event, ...validators)` is the Global-channel equivalent of `channel:Expect`. Rules: extra arguments beyond the schema are always rejected; trailing `optional(...)` validators express optional arguments; the first failure drops the packet with a positional reason in the log. Gate: `Config.ValidationEnabled` (default on).
+
+`Network.Validators`: `any` `boolean` `string` `number`* `numberRaw` `integer` `table` `buffer` `optional` `literal` `union` `array`(+max len) `dict` `interface` `strictInterface` `numberMin` `numberMax` `numberRange`* `integerRange` `stringMaxLength` `match` `enumItem` `instance` `instanceIsA` `vector3`* `vector2`* `cframe`* `color3` `udim2`* `custom`
+
+\* rejects NaN/±inf — exploiters cannot smuggle non-finite numbers through a validated event.
 
 ### Global channel
 
@@ -114,7 +125,7 @@ Zero thread allocation for non-yielding handlers; a handler that errors never br
 - [x] **Step 1 — Foundation**: tooling, CI, `Types`, `Config`, `Signal`, `Log`, test harness
 - [x] **Step 2 — Core transport**: remote creation/discovery, envelope, `Fire`/`On`/`Once`/`Off`, `FireAll`/`FireExcept`/`FireList`, unreliable variants
 - [x] **Step 3 — Channels**: isolated channel instances with per-channel remotes
-- [ ] **Step 4 — Validation**: schema validators (`t`-style), automatic packet rejection
+- [x] **Step 4 — Validation**: schema validators (`t`-style), automatic packet rejection
 - [ ] **Step 5 — Security**: rate limiting, abuse detection, permissions, audit log, suspicious-activity hooks
 - [ ] **Step 6 — Middleware**: global + per-channel chains
 - [ ] **Step 7 — Request/response**: `Invoke`, promises, timeouts, retries, cancellation

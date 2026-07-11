@@ -14,7 +14,7 @@ init.luau (public surface, context-aware)
     ├── Utilities/     Log, TableUtil
     ├── Core/          Envelope, RemoteRegistry, Dispatcher (Step 2, done)
     ├── Channels/      Channel objects (Step 3, done)
-    ├── Validation/    schema validators (Step 4)
+    ├── Validation/    Validators + SchemaRegistry (Step 4, done)
     ├── Security/      rate limiter, abuse detection (Step 5)
     ├── Middleware/    chain runner + built-ins (Step 6)
     ├── Serialization/ datatype codecs (Step 8)
@@ -111,3 +111,27 @@ bound flags) lives in the transports keyed by channel name; the Channel
 object is just a name plus method sugar. Middleware/validation/rate-limit
 scoping in later steps attaches to the name, which means it works identically
 through `Network.Fire` and `channel:Fire`.
+
+## Step 4 design decisions
+
+**Validators are plain functions.** `(value) -> (boolean, string?)` — no
+classes, no metatables. Composition is function composition, custom
+validators are just functions, and the hot path is a plain call.
+
+**Schemas are positional and closed.** A schema lists one validator per
+argument; *more* arguments than validators always rejects. An exploiter
+cannot append payload past a validated signature. Fewer arguments validate
+the missing slots as nil, so `optional(...)` at the tail is the one way to
+express optional args — explicit, visible in the schema.
+
+**Checking allocates nothing.** Varargs are walked with `select`, never
+packed. A validated event costs the validator calls and nothing else.
+
+**Non-finite numbers are rejected by default.** NaN and ±inf pass typeof
+checks but break math silently downstream (`NaN > x` is always false, so
+naive clamps don't save you). `number`, ranges, and every component-bearing
+datatype validator reject them; `numberRaw` is the opt-out.
+
+**Registry is context-local.** The server's schemas validate client→server
+traffic — the security-critical direction. Client registration exists as a
+development aid and costs nothing when unused.

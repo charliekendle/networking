@@ -31,6 +31,7 @@ local RunService = game:GetService("RunService")
 
 local Envelope = require(script.Parent.Parent.Core.Envelope)
 local Dispatcher = require(script.Parent.Parent.Core.Dispatcher)
+local Types = require(script.Parent.Parent.Types)
 
 local IS_SERVER = RunService:IsServer()
 
@@ -44,6 +45,7 @@ export type Connection = Dispatcher.Connection
 export type Channel = {
 	Name: string,
 
+	Expect: (self: Channel, eventName: string, ...Types.Validator) -> (),
 	On: (self: Channel, eventName: string, callback: (...any) -> ()) -> Connection,
 	Once: (self: Channel, eventName: string, callback: (...any) -> ()) -> Connection,
 	Off: (self: Channel, eventName: string) -> (),
@@ -61,6 +63,21 @@ export type Channel = {
 
 local ChannelClass = {}
 ChannelClass.__index = ChannelClass
+
+--[=[
+	Registers a positional argument schema for incoming `event` packets on
+	this channel. Packets failing it are dropped and logged before handlers
+	run. Register on the **server** for security; client registration is a
+	development aid.
+
+	```lua
+	Combat:Expect("Damage", V.numberRange(0, 100))
+	Shop:Expect("Purchase", V.string, V.optional(V.integer))
+	```
+]=]
+function ChannelClass.Expect(self: any, eventName: string, ...: Types.Validator)
+	Transport.Expect(self.Name, eventName, { ... })
+end
 
 --[=[
 	Listens for `event` on this channel.

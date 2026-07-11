@@ -24,6 +24,13 @@ Combat:On("Ping", function(player, value)
 	Combat:Fire(player, "Pong", value * 2)
 end)
 
+-- Validation: server drops anything that isn't a single number 1..10.
+local V = Network.Validators
+Network.Expect("ValidatedPing", V.numberRange(1, 10))
+Network.On("ValidatedPing", function(player, value)
+	print(`[PlayTest/Server] ValidatedPing {value} from {player.Name} — passed validation`)
+end)
+
 Players.PlayerAdded:Connect(function(player)
 	task.wait(1)
 	Network.FireAll("Announce", `Welcome {player.Name}`)

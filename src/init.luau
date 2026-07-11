@@ -50,13 +50,15 @@ local ClientTransport = if not IS_SERVER then require(script.Client.Transport) :
 local ChannelModule = require(script.Shared.Channels.Channel)
 export type Channel = ChannelModule.Channel
 
+local Validators = require(script.Shared.Validation.Validators)
+
 local Network = {}
 
 --[=[
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.3.0"
+Network.Version = "0.4.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -64,6 +66,13 @@ Network.Version = "0.3.0"
 	Exposed so games can reuse the package's signal implementation.
 ]=]
 Network.Signal = Signal
+
+--[=[
+	@prop Validators Validators
+	@within Network
+	Composable runtime validators for use with Expect. See Validators.
+]=]
+Network.Validators = Validators
 
 --[=[
 	@prop ConfigChanged Signal<NetworkConfig>
@@ -101,6 +110,25 @@ end
 ]=]
 function Network.Channel(name: string): Channel
 	return ChannelModule.get(name)
+end
+
+--[=[
+	Registers a positional argument schema for incoming `event` packets on
+	the Global channel. Packets failing it are dropped and logged before
+	your handler runs.
+
+	```lua
+	local V = Network.Validators
+	Network.Expect("Damage", V.numberRange(0, 100))
+	Network.Expect("Purchase", V.string, V.optional(V.integer))
+	```
+]=]
+function Network.Expect(eventName: string, ...: Validator)
+	if IS_SERVER then
+		ServerTransport.Expect(GLOBAL_CHANNEL, eventName, { ... })
+	else
+		ClientTransport.Expect(GLOBAL_CHANNEL, eventName, { ... })
+	end
 end
 
 --[=[

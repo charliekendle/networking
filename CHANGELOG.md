@@ -3,7 +3,15 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.3.0] - Unreleased
+## [0.4.0] - Unreleased
+
+### Added — Step 4 (Validation)
+- `Validators` — composable runtime validators: primitives (`boolean`/`string`/`number`/`integer`/`table`/`buffer`/`any`), combinators (`optional`/`literal`/`union`/`array`/`dict`/`interface`/`strictInterface`/`custom`), constraints (`numberRange`/`integerRange`/`numberMin`/`numberMax`/`stringMaxLength`/`match`), Roblox datatypes (`vector3`/`vector2`/`cframe`/`color3`/`udim2`/`enumItem`/`instance`/`instanceIsA`). `number` and all datatype validators reject NaN/±inf by design.
+- `SchemaRegistry` — positional schemas per `(channel, event)`; allocation-free vararg checking; extra arguments always rejected; trailing `optional(...)` expresses optional args.
+- `Network.Expect(event, ...validators)` / `channel:Expect(event, ...validators)` — packets failing the schema are dropped and logged before handlers run. Gated by `Config.ValidationEnabled`.
+- Specs: Validators (9), SchemaRegistry (6) — 55 tests total. Playtest sends one valid + three invalid `ValidatedPing`s to demonstrate live rejection.
+
+## [0.3.0] - 2026-07-11
 
 ### Added — Step 3 (Channels)
 - `Channel` — isolated named channels with the full transport surface (`On`/`Once`/`Off`, `Fire`/`FireUnreliable`, server-only `FireAll`/`FireAllUnreliable`/`FireExcept`/`FireList`).

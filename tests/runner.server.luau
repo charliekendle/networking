@@ -10,6 +10,8 @@ local ok = TestKit.run({
 	RemoteRegistry = require(script.Parent["RemoteRegistry.spec"]) :: TestKit.Spec,
 	ServerTransport = require(script.Parent["ServerTransport.spec"]) :: TestKit.Spec,
 	Channel = require(script.Parent["Channel.spec"]) :: TestKit.Spec,
+	Validators = require(script.Parent["Validators.spec"]) :: TestKit.Spec,
+	SchemaRegistry = require(script.Parent["SchemaRegistry.spec"]) :: TestKit.Spec,
 })
 
 if not ok then
