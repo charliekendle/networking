@@ -42,6 +42,7 @@ export type NetworkConfig = {
 	DefaultTimeout: number,
 	DefaultRetries: number,
 	RemoteFolderName: string,
+	MaxPacketBytes: number,
 	RateLimit: RateLimitConfig,
 }
 
@@ -55,6 +56,7 @@ export type PartialNetworkConfig = {
 	DefaultTimeout: number?,
 	DefaultRetries: number?,
 	RemoteFolderName: string?,
+	MaxPacketBytes: number?,
 	RateLimit: {
 		Enabled: boolean?,
 		MaxPacketsPerSecond: number?,

@@ -38,6 +38,7 @@ local DEFAULTS: Types.NetworkConfig = {
 	DefaultTimeout = 10,
 	DefaultRetries = 0,
 	RemoteFolderName = "_Networking",
+	MaxPacketBytes = 65536, -- cap on incoming defined-event/serialized buffers
 	RateLimit = {
 		Enabled = true,
 		MaxPacketsPerSecond = 60,
@@ -70,6 +71,12 @@ local function validatePatch(patch: Types.PartialNetworkConfig)
 		assert(
 			type(patch.DefaultRetries) == "number" and patch.DefaultRetries >= 0,
 			"DefaultRetries must be >= 0"
+		)
+	end
+	if patch.MaxPacketBytes ~= nil then
+		assert(
+			type(patch.MaxPacketBytes) == "number" and patch.MaxPacketBytes > 0,
+			"MaxPacketBytes must be > 0"
 		)
 	end
 	if patch.RemoteFolderName ~= nil then

@@ -73,7 +73,7 @@ local Network = {}
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "1.1.0"
+Network.Version = "1.2.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -161,6 +161,18 @@ end
 ]=]
 Network.OnSuspiciousActivity = (
 	if IS_SERVER then ServerTransport.OnSuspiciousActivity else Signal.new()
+) :: Signal.Signal<SecurityReport>
+
+--[=[
+	@prop OnViolation Signal<SecurityReport>
+	@within Network
+	@server
+	Fires on **every** dropped packet — the raw, unthresholded stream for
+	games handling violations themselves. `OnSuspiciousActivity` and the
+	audit log are optional conveniences on top; all are safe to ignore.
+]=]
+Network.OnViolation = (
+	if IS_SERVER then ServerTransport.OnViolation else Signal.new()
 ) :: Signal.Signal<SecurityReport>
 
 --[=[

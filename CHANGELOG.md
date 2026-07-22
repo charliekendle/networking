@@ -3,7 +3,23 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [1.1.0] - Unreleased
+## [1.2.0] - Unreleased
+
+Security-design fixes responding to community review:
+
+### Added
+- **Per-channel rate limits** — `channel:SetRateLimit({MaxPacketsPerSecond?, BurstAllowance?})` overrides the global config for that channel only (partial keys fall back; nil clears; existing buckets reset so changes apply immediately). Combat at 120/s and Shop at 5/s can now coexist.
+- **`Network.OnViolation`** — fires on *every* dropped packet, no thresholding: the raw stream for games handling violations themselves. `OnSuspiciousActivity` (threshold convenience) and the audit log remain, and all three are explicitly safe to ignore — the library's defaults never require reading any of them.
+- **`Config.MaxPacketBytes`** (default 64 KiB) — incoming defined-event buffers exceeding it are dropped + striked before any decode work.
+
+### Fixed
+- **Deserialize memory bomb** — a hostile buffer could claim a huge array/dict count and trigger a giant `table.create` before any bounds check. Claimed element counts are now validated against the remaining byte budget (every element needs ≥1 byte) *before* allocation; a 10-byte bomb claiming 268M elements now errors instantly.
+- **Deserialize depth bomb** — recursion is capped (depth 100); a few hundred bytes of nested table tags can no longer threaten the stack.
+- Specs: SecurityHardening (5, incl. both bomb reproductions) — 116 tests total. Playtest adds a per-channel-limit demo, an oversized-payload rejection, and an OnViolation stream count.
+
+Known gap acknowledged for 1.3: per-frame packet batching and numeric event IDs (the remaining widely-used wire optimizations).
+
+## [1.1.0] - 2026-07-22
 
 ### Added — Defined events (`Network.Schema` + `channel:Define`)
 Addresses the fair criticism that validators were runtime gates only. A Schema codec now does triple duty — wire format, static type, and validation:

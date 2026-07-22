@@ -119,6 +119,11 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, eventName
 			Log.Warn("Rejected defined event %q from server on channel %q: expected a single buffer", eventName :: string, channelName)
 			return
 		end
+		if buffer.len(blob :: buffer) > Config.Get().MaxPacketBytes then
+			Stats.countDrop(channelName)
+			Log.Warn("Rejected defined event %q from server on channel %q: payload exceeds MaxPacketBytes", eventName :: string, channelName)
+			return
+		end
 		local decoded, value = pcall(Schema.decode, codec, blob :: buffer)
 		if not decoded then
 			Stats.countDrop(channelName)

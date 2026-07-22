@@ -74,6 +74,7 @@ export type Channel = {
 	Name: string,
 
 	Define: <T>(self: Channel, eventName: string, codec: Schema.Codec<T>) -> EventDef<T>,
+	SetRateLimit: (self: Channel, limits: { MaxPacketsPerSecond: number?, BurstAllowance: number? }?) -> (),
 	Expect: (self: Channel, eventName: string, ...Types.Validator) -> (),
 	Use: (self: Channel, middleware: Types.Middleware) -> Connection,
 	On: (self: Channel, eventName: string, callback: (...any) -> ()) -> Connection,
@@ -155,6 +156,21 @@ end
 
 local ChannelClass = {}
 ChannelClass.__index = ChannelClass
+
+--[=[
+	@server
+	Overrides the global rate limit for this channel only. Partial keys fall
+	back to `Config.RateLimit`; nil clears the override:
+
+	```lua
+	Combat:SetRateLimit({ MaxPacketsPerSecond = 120, BurstAllowance = 40 })
+	Shop:SetRateLimit({ MaxPacketsPerSecond = 5 })
+	```
+]=]
+function ChannelClass.SetRateLimit(self: any, limits: { MaxPacketsPerSecond: number?, BurstAllowance: number? }?)
+	assert(IS_SERVER, "Channel:SetRateLimit is server-only")
+	Transport.SetRateLimit(self.Name, limits)
+end
 
 --[=[
 	Defines a typed event: the Schema codec becomes the wire format, the

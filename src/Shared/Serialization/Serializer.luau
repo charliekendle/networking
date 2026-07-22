@@ -226,9 +226,16 @@ local readF32 = BufferIO.readF32
 local readVarint = BufferIO.readVarint
 local readRawString = BufferIO.readRawString
 
+-- A hostile buffer can claim absurd element counts or nesting depth in a
+-- handful of bytes. Every claimed element needs at least 1 byte of input,
+-- so counts are checked against the remaining bytes BEFORE any allocation,
+-- and recursion is capped.
+local MAX_DEPTH = 100
+
 local readValue -- forward declaration (recursive)
 
-function readValue(reader: Reader): unknown
+function readValue(reader: Reader, depth: number): unknown
+	assert(depth <= MAX_DEPTH, "Deserialize: nesting too deep")
 	local tag = readU8(reader)
 
 	if tag == TAG_NIL then
@@ -266,13 +273,15 @@ function readValue(reader: Reader): unknown
 	elseif tag == TAG_TABLE then
 		local arrayCount = readVarint(reader)
 		local dictCount = readVarint(reader)
+		local remaining = reader.length - reader.cursor
+		assert(arrayCount + dictCount * 2 <= remaining, "Deserialize: element count exceeds buffer size")
 		local result: { [unknown]: unknown } = table.create(arrayCount)
 		for index = 1, arrayCount do
-			result[index] = readValue(reader)
+			result[index] = readValue(reader, depth + 1)
 		end
 		for _ = 1, dictCount do
-			local key = readValue(reader)
-			local value = readValue(reader)
+			local key = readValue(reader, depth + 1)
+			local value = readValue(reader, depth + 1)
 			assert(key ~= nil, "Deserialize: nil table key")
 			result[key] = value
 		end
@@ -329,7 +338,7 @@ function Serializer.deserialize(blob: buffer): unknown
 		length = base.length,
 		strings = {},
 	}
-	local value = readValue(reader)
+	local value = readValue(reader, 0)
 	assert(reader.cursor == reader.length, "Deserialize: trailing bytes")
 	return value
 end

@@ -24,9 +24,15 @@ type Bucket = {
 	lastRefill: number,
 }
 
+export type ChannelLimits = {
+	MaxPacketsPerSecond: number?,
+	BurstAllowance: number?,
+}
+
 local RateLimiter = {}
 
 local buckets: { [Player]: { [string]: Bucket } } = {}
+local channelOverrides: { [string]: ChannelLimits } = {}
 
 --[=[
 	@server
@@ -35,8 +41,10 @@ local buckets: { [Player]: { [string]: Bucket } } = {}
 ]=]
 function RateLimiter.check(player: Player, channelName: string): boolean
 	local rateConfig = Config.Get().RateLimit
-	local ratePerSecond = rateConfig.MaxPacketsPerSecond
-	local capacity = ratePerSecond + rateConfig.BurstAllowance
+	local override = channelOverrides[channelName]
+	local ratePerSecond = (override and override.MaxPacketsPerSecond) or rateConfig.MaxPacketsPerSecond
+	local burst = (override and override.BurstAllowance) or rateConfig.BurstAllowance
+	local capacity = ratePerSecond + burst
 	local now = os.clock()
 
 	local playerBuckets = buckets[player]
@@ -65,6 +73,42 @@ function RateLimiter.check(player: Player, channelName: string): boolean
 end
 
 --[=[
+	Sets per-channel limits overriding the global `Config.RateLimit`
+	defaults for that channel only. Partial: omitted keys fall back to the
+	global config. Pass nil to clear the override. Existing buckets for the
+	channel are reset so the new limits apply immediately.
+
+	```lua
+	Combat:SetRateLimit({ MaxPacketsPerSecond = 120, BurstAllowance = 40 })
+	Shop:SetRateLimit({ MaxPacketsPerSecond = 5 })
+	```
+]=]
+function RateLimiter.setChannelLimits(channelName: string, limits: ChannelLimits?)
+	if limits == nil then
+		channelOverrides[channelName] = nil
+	else
+		assert(type(limits) == "table", "SetRateLimit expects a table or nil")
+		if limits.MaxPacketsPerSecond ~= nil then
+			assert(
+				type(limits.MaxPacketsPerSecond) == "number" and limits.MaxPacketsPerSecond > 0,
+				"MaxPacketsPerSecond must be > 0"
+			)
+		end
+		if limits.BurstAllowance ~= nil then
+			assert(
+				type(limits.BurstAllowance) == "number" and limits.BurstAllowance >= 0,
+				"BurstAllowance must be >= 0"
+			)
+		end
+		channelOverrides[channelName] = { MaxPacketsPerSecond = limits.MaxPacketsPerSecond, BurstAllowance = limits.BurstAllowance }
+	end
+	-- Reset buckets on this channel so new limits take effect immediately.
+	for _, playerBuckets in buckets do
+		playerBuckets[channelName] = nil
+	end
+end
+
+--[=[
 	Drops all buckets for a player. Called automatically on PlayerRemoving.
 ]=]
 function RateLimiter.clear(player: Player)
@@ -76,6 +120,7 @@ end
 ]=]
 function RateLimiter.clearAll()
 	table.clear(buckets)
+	table.clear(channelOverrides)
 end
 
 if RunService:IsServer() then

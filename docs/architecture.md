@@ -256,3 +256,23 @@ same thing.
 **Send-site check.** `Fire` on a typed handle validates before encoding, so
 a server bug that produces `Power = 999` errors loudly at the call site
 instead of being silently dropped by the peer.
+
+## 1.2 design decisions — hardening
+
+**Counts are proven against the byte budget before allocation.** A
+serialized element costs at least one byte, so a claimed count larger than
+the remaining input is provably a lie — checked before `table.create`, so a
+10-byte buffer claiming 268M elements errors in microseconds instead of
+attempting a gigabyte allocation. Depth is capped the same way; both bombs
+have spec reproductions.
+
+**Rate limits resolve per channel.** Effective limits = channel override or
+global default, resolved at check time so both stay live-tunable. Overrides
+reset the channel's existing buckets so a mid-incident tightening applies
+immediately rather than after buckets drain.
+
+**Violation visibility is tiered and ignorable.** The contract: the library
+is fully safe with zero listeners (drop + throttled log). `OnViolation` is
+the raw per-drop stream for games that want their own policy;
+`OnSuspiciousActivity` is a pre-built consecutive-strike policy; the audit
+log is a fixed-cost forensic buffer. None depends on the others.

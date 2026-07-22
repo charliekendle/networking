@@ -187,6 +187,19 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, player: P
 			end
 			return
 		end
+		if buffer.len(blob :: buffer) > config.MaxPacketBytes then
+			Stats.countDrop(channelName)
+			if securityOn then
+				SecurityMonitor.reportViolation(
+					player,
+					channelName,
+					eventName :: string,
+					"Validation",
+					`payload exceeds MaxPacketBytes ({buffer.len(blob :: buffer)} > {config.MaxPacketBytes})`
+				)
+			end
+			return
+		end
 		local decoded, value = pcall(Schema.decode, codec, blob :: buffer)
 		if not decoded then
 			Stats.countDrop(channelName)
@@ -335,6 +348,21 @@ end
 	violations reach `Config.RateLimit.PunishThreshold`.
 ]=]
 Transport.OnSuspiciousActivity = SecurityMonitor.OnSuspiciousActivity
+
+--[=[
+	@prop OnViolation Signal<SecurityReport>
+	@within ServerTransport
+	Fires on every dropped packet (no thresholding). See SecurityMonitor.
+]=]
+Transport.OnViolation = SecurityMonitor.OnViolation
+
+--[=[
+	Per-channel rate-limit override. Partial keys fall back to the global
+	config; nil clears. See RateLimiter.
+]=]
+function Transport.SetRateLimit(channelName: string, limits: RateLimiter.ChannelLimits?)
+	RateLimiter.setChannelLimits(channelName, limits)
+end
 
 --[=[
 	Returns the bounded security audit log (most recent 256 entries,

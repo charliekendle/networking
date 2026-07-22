@@ -54,6 +54,17 @@ local SecurityMonitor = {}
 ]=]
 SecurityMonitor.OnSuspiciousActivity = Signal.new() :: Signal.Signal<Types.SecurityReport>
 
+--[=[
+	@prop OnViolation Signal<SecurityReport>
+	@within SecurityMonitor
+	@server
+	Fires on EVERY dropped packet, no thresholding — the raw stream for
+	games that want to handle violations themselves. `OnSuspiciousActivity`
+	(threshold-based) and the audit log are conveniences layered on top;
+	all three are safe to ignore entirely.
+]=]
+SecurityMonitor.OnViolation = Signal.new() :: Signal.Signal<Types.SecurityReport>
+
 local records: { [Player]: PlayerRecord } = {}
 local auditLog: { Types.AuditEntry } = {}
 local auditWriteIndex = 0
@@ -97,6 +108,15 @@ function SecurityMonitor.reportViolation(
 		Event = eventName,
 		Kind = kind,
 		Reason = reason,
+	})
+
+	SecurityMonitor.OnViolation:Fire({
+		Player = player,
+		Channel = channelName,
+		Event = eventName,
+		Kind = kind,
+		Reason = reason,
+		Strikes = record.strikes,
 	})
 
 	local now = os.clock()

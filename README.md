@@ -9,7 +9,7 @@ Production-grade, type-safe networking for Roblox. Channels, middleware, validat
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@1.1.0"
+Networking = "charliekendle/networking@1.2.0"
 ```
 
 ```lua
@@ -68,7 +68,7 @@ Defined events skip the runtime validator pass entirely (decode enforces the sch
 
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (1.1.0)
+## Live API (1.2.0)
 
 ### Channels
 
@@ -79,6 +79,7 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 | `channel:Fire/FireUnreliable` | both | Server: `(player, event, ...)`. Client: `(event, ...)`. |
 | `channel:FireAll/FireAllUnreliable/FireExcept/FireList` | server | Broadcast family, scoped to the channel. |
 | `channel:Define(event, codec)` | both | Typed event: schema = wire format = type = validation. Returns `EventDef<T>`. Define in shared code. |
+| `channel:SetRateLimit(limits?)` | server | Per-channel rate-limit override (partial; nil clears). |
 | `channel:Expect(event, ...validators)` | both | Positional schema for incoming packets (untyped tier); failures dropped + logged before handlers. Register server-side for security. |
 | `channel:Use(middleware)` | both | Inbound middleware scoped to the channel. |
 | `channel:OnInvoke(event, handler)` | both | Answer invokes. Server handler `(player, ...) -> ...reply`; client `(...) -> ...reply`. May yield. |
@@ -162,7 +163,9 @@ end)
 local entries = Network.GetAuditLog() -- most recent 256 drops, oldest first
 ```
 
-Rate limiting is a token bucket per player **per channel** (defaults: 60 packets/s + 20 burst) — a flood on one channel can't starve legitimate traffic on another. All limits live-tunable via `Network.Configure`; gates: `SecurityEnabled`, `RateLimit.Enabled`. Violation logging is throttled to once per second per player.
+Rate limiting is a token bucket per player **per channel** (defaults: 60 packets/s + 20 burst), overridable per channel via `channel:SetRateLimit` — Combat at 120/s and Shop at 5/s coexist. A flood on one channel can't starve another. All limits live-tunable; gates: `SecurityEnabled`, `RateLimit.Enabled`.
+
+Three tiers of violation visibility, **all optional** (defaults never require reading any of them): `Network.OnViolation` streams every drop raw; `OnSuspiciousActivity` fires at the consecutive-strike threshold; `GetAuditLog()` keeps the last 256 for forensics. Incoming defined-event buffers are size-capped by `Config.MaxPacketBytes` (default 64 KiB) before any decode work, and `Deserialize` validates claimed element counts against the byte budget and caps nesting depth — hostile buffers cannot trigger large allocations or deep recursion.
 
 ### Global channel
 

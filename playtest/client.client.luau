@@ -101,6 +101,17 @@ for index = 1, 100 do
 end
 Network.Fire("Snapshot", Network.Serialize(inventory))
 
+-- Per-channel limit demo: 10 rapid taps at a 2/s channel — ~2 should pass.
+local Strict = Network.Channel("Strict")
+for _ = 1, 10 do
+	Strict:Fire("Tap")
+end
+task.wait(1.2)
+Strict:Fire("TapDone")
+
+-- Oversized defined payload: 100KB buffer at TypedAttack (cap 64KB) — must reject.
+Combat:Fire("TypedAttack", buffer.create(100000))
+
 -- Security demo LAST (drains the Global bucket): 200-packet burst.
 -- Default limits (60/s + 20 burst) should let ~80 through and drop the rest,
 -- firing SUSPICIOUS lines server-side. Legit traffic above already completed.

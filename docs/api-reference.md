@@ -61,7 +61,8 @@ The functions below are the Global-channel versions of the identically named [Ch
 
 | Member | Context |
 | --- | --- |
-| `Network.OnSuspiciousActivity` | S — `Signal<SecurityReport>`. |
+| `Network.OnViolation` | S — `Signal<SecurityReport>`, fires on every drop (unthresholded). |
+| `Network.OnSuspiciousActivity` | S — `Signal<SecurityReport>`, fires at the strike threshold. |
 | `Network.GetAuditLog() -> {AuditEntry}` | S — last 256 drops, oldest first. |
 
 ### Serialization & compression
@@ -114,6 +115,7 @@ local Combat = Network.Channel("Combat")
 | `channel:FireWithinRadius(origin, radius, event, ...)` | S | Around another player's character (origin included). |
 | `channel:Expect(event, ...validators)` | SC | Positional schema; see [Validation](#validation-rules). |
 | `channel:Use(middleware) -> Connection` | SC | Channel-scoped inbound middleware. |
+| `channel:SetRateLimit({MaxPacketsPerSecond?, BurstAllowance?}?)` | S | Per-channel limit override; partial keys fall back to global; nil clears. |
 | `channel:OnInvoke(event, handler)` | SC | Server handler `(player, ...) -> ...reply`; client `(...) -> ...reply`. May yield. One per event. |
 | `channel:Invoke(event, ...) -> Promise` | C | Config default timeout/retries. |
 | `channel:InvokeWithOptions(options, event, ...) -> Promise` | C | `{Timeout: number?, Retries: number?}`. |
@@ -135,6 +137,7 @@ Defaults shown. All keys live-tunable via `Network.Configure`; per-key validatio
 	DefaultTimeout = 10,        -- seconds: invoke timeout, client remote discovery
 	DefaultRetries = 0,         -- client->server invoke resends after timeout
 	RemoteFolderName = "_Networking",
+	MaxPacketBytes = 65536,     -- cap on incoming defined-event buffers
 	RateLimit = {
 		Enabled = true,
 		MaxPacketsPerSecond = 60, -- refill rate per player per channel

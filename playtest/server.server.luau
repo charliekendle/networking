@@ -98,6 +98,11 @@ Players.PlayerAdded:Connect(function(player)
 		end)
 end)
 
+local violationCount = 0
+Network.OnViolation:Connect(function(report)
+	violationCount += 1
+end)
+
 -- Security: count how much of a 200-packet spam burst actually gets through,
 -- and watch the suspicious-activity hook fire.
 local spamReceived = 0
@@ -109,8 +114,20 @@ Network.On("SpamDone", function(player)
 	local audit = Network.GetAuditLog()
 	print(`[PlayTest/Server] Spam burst: {spamReceived}/200 passed the rate limiter; audit log has {#audit} entries`)
 	print(`[PlayTest/Server] Global middleware observed {packetsSeen} dispatched packets total`)
+	print(`[PlayTest/Server] OnViolation streamed {violationCount} individual violations`)
 	local stats = Network.GetStats()
 	print(`[PlayTest/Server] Stats: sent={stats.Sent} received={stats.Received} dropped={stats.Dropped} rtt={stats.AverageInvokeRtt}`)
+end)
+
+-- Per-channel limits: Combat generous, a strict channel for the demo.
+local Strict = Network.Channel("Strict")
+Strict:SetRateLimit({ MaxPacketsPerSecond = 2, BurstAllowance = 0 })
+local strictReceived = 0
+Strict:On("Tap", function()
+	strictReceived += 1
+end)
+Strict:On("TapDone", function()
+	print(`[PlayTest/Server] Strict channel: {strictReceived}/10 taps passed (limit 2/s) — PER-CHANNEL LIMIT OK`)
 end)
 
 Network.OnSuspiciousActivity:Connect(function(report)
