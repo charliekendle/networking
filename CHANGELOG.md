@@ -3,7 +3,20 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.8.1] - Unreleased
+## [1.0.0] - Unreleased
+
+### Added — Step 11 (Docs, examples, benchmarks) & API freeze
+- `docs/api-reference.md` — complete API reference for the 1.0 surface.
+- `docs/tutorials.md` — 8 tutorials from hello-world to debugging.
+- `docs/migration.md` — migrating from raw remotes and Net/Red-style libraries; version policy.
+- `CONTRIBUTING.md` — setup, workflow, design rules, release process.
+- `examples/` — combat (schema + gate + spatial), shop (validated invokes, both promise styles), security hooks, serialized+compressed snapshots; server and client halves.
+- `benchmark/` + `benchmark.project.json` — Signal, Dispatcher, validation, rate limiter, Serializer, and Compression benchmarks.
+
+### Changed
+- **API freeze.** 1.x guarantees no breaking changes to documented APIs or wire-format tags without a major bump.
+
+## [0.8.1] - 2026-07-18
 
 ### Added
 - `Compression` (`Network.Compress`/`Network.Decompress`) — LZW over buffers, 1-byte header, automatic raw fallback when compression wouldn't shrink the input (never grows output beyond input + 1 byte). Decompress rejects corrupt/truncated input. Specs: 5.

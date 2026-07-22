@@ -1,0 +1,12 @@
+{
+    "name": "networking-benchmark",
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "Networking": { "$path": "src" }
+        },
+        "ServerScriptService": {
+            "Benchmark": { "$path": "benchmark/benchmark.server.luau" }
+        }
+    }
+}

@@ -69,7 +69,7 @@ local Network = {}
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.8.1"
+Network.Version = "1.0.0"
 
 --[=[
 	@prop Signal SignalConstructor

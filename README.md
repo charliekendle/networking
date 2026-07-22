@@ -2,14 +2,14 @@
 
 Production-grade, type-safe networking for Roblox. Channels, middleware, validation, security, and debugging built in — installed with a single Wally dependency.
 
-> **Status: pre-release (0.8.x), feature-complete for 1.0.** Transport, channels, validation, security, middleware, request/response (promises), serialization, spatial fire, and debug statistics are all live. Remaining before 1.0: extended docs/examples and API freeze.
+> **Status: 1.0 — stable.** Full docs in [docs/api-reference.md](docs/api-reference.md), tutorials in [docs/tutorials.md](docs/tutorials.md), migration notes in [docs/migration.md](docs/migration.md). 1.x guarantees no breaking changes to documented APIs or the wire format without a major bump.
 
 ## Installation
 
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@0.8.0"
+Networking = "charliekendle/networking@1.0.0"
 ```
 
 ```lua
@@ -44,7 +44,7 @@ end)
 
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (0.8.0)
+## Live API (1.0.0)
 
 ### Channels
 
@@ -207,8 +207,8 @@ Zero thread allocation for non-yielding handlers; a handler that errors never br
 - [x] **Step 8 — Serialization & compression**: value trees → compact buffers (varints, string interning, Roblox datatypes) + LZW with raw fallback
 - [x] **Step 9 — Spatial fire**: `FireNearby`, `FireWithinRadius`
 - [x] **Step 10 — Debugging**: statistics, packet log, invoke RTT tracking
-- [ ] **Step 11 — Docs & examples**: full API reference, tutorials, migration guide
-- [ ] **1.0.0** — API freeze
+- [x] **Step 11 — Docs & examples**: full API reference, tutorials, migration guide, benchmarks
+- [x] **1.0.0** — API freeze
 
 ## Development
 
@@ -217,7 +217,8 @@ Toolchain via [Rokit](https://github.com/rojo-rbx/rokit):
 ```bash
 rokit install
 rojo sourcemap default.project.json --output sourcemap.json  # analysis
-rojo build test.project.json --output test.rbxl              # test place
+rojo build test.project.json --output test.rbxl              # test place (F8 units, F5 e2e)
+rojo build benchmark.project.json --output benchmark.rbxl    # benchmark place (F8)
 stylua src tests && selene src tests                          # format + lint
 ```
 
