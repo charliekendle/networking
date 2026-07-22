@@ -3,7 +3,38 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.6.0] - Unreleased
+## [0.8.1] - Unreleased
+
+### Added
+- `Compression` (`Network.Compress`/`Network.Decompress`) — LZW over buffers, 1-byte header, automatic raw fallback when compression wouldn't shrink the input (never grows output beyond input + 1 byte). Decompress rejects corrupt/truncated input. Specs: 5.
+
+### Changed
+- Serializer wire format v2: varint (LEB128) lengths/counts and **string interning** — repeated strings (dictionary keys especially) collapse to ~2 bytes after first occurrence. The 100-item benchmark payload dropped from 4309 to ~1.5 KB.
+
+### Fixed
+- Middleware chains now snapshot before running: a middleware disconnecting itself (or others) mid-run no longer skips sibling middleware for that packet.
+- Invoke rejection reasons are clean strings again ("InvokeTimeout", not "ReplicatedStorage...Transport:338: InvokeTimeout") — internal rethrows use error level 0.
+
+## [0.8.0] - Unreleased
+
+### Added — Step 7 (Request/response)
+- `Promise` (`Network.Promise`) — chaining (`AndThen`/`Catch`/`Finally`), flattening, `Await`/`Expect`, cancellation with onCancel hooks. Handlers always run async; handler errors reject the chain.
+- Invoke protocol over reserved `__invoke`/`__reply` events on the Reliable remote (correlation IDs; the per-channel RemoteFunction stays unused — RemoteEvent correlation gives clean timeouts and cancellation without engine hang risks).
+- Client→server: `channel:Invoke(event, ...)` / `InvokeWithOptions({Timeout, Retries}, ...)` — timeouts reject with `"InvokeTimeout"` and retry with a fresh id (only timeouts retry; an error reply means the server already ran the handler). Server→client: `channel:InvokeClient(player, event, ...)` — always timeout-bounded, never retried, pending invokes rejected with `"PlayerLeft"` on leave.
+- Handlers via `channel:OnInvoke(event, handler)` (one per event, may yield, run off the receive path). Server handler errors reply a **sanitized** "Invoke handler error" (real error logged server-side only). Schemas from `Expect` apply to invoke arguments; malformed protocol frames and cross-player reply spoofing are reported as `"Protocol"` violations.
+- Global-channel equivalents: `Network.OnInvoke/Invoke/InvokeWithOptions/InvokeClient`.
+
+### Added — Step 8 (Serialization)
+- `Serializer` (`Network.Serialize`/`Network.Deserialize`) — packs value trees into one compact buffer: variable-width integers (1/2/4/8 bytes), strings, nested tables (array+dict), buffers, Vector3/Vector2/CFrame (axis-angle)/Color3/UDim2/EnumItems. Errors on Instances, functions, cyclic tables; deserialize errors on truncated/corrupt/unknown-tag input instead of crashing.
+
+### Added — Step 9 (Spatial fire)
+- `FireNearby(position, radius, event, ...)` and `FireWithinRadius(originPlayer, radius, event, ...)` on channels, transports, and the Global surface (server-only).
+
+### Added — Step 10 (Debugging)
+- `Stats` — always-on counters (total + per-channel Sent/Received/Dropped), rolling average invoke RTT (64-sample window), and a 128-entry packet log recorded only while `DebugMode` is on. `Network.GetStats()` / `Network.GetPacketLog()` on both contexts.
+- Specs: Promise (10), Serializer (9), Stats (4) — 94 tests total. Playtest covers invoke happy/error/missing/timeout paths, a server→client invoke, a serialized 100-item snapshot, and a stats dump.
+
+## [0.6.0] - 2026-07-11
 
 ### Added — Step 6 (Middleware)
 - `MiddlewareRegistry` — ordered inbound chains, global and per-channel. Execution: global (registration order) → channel chain. Verdicts: `"Continue"` (optionally with a replacement packet, which flows downstream) or `"Drop"`. Errors and invalid verdicts **fail closed** (packet dropped + Error log) — a crashed permission check never fails open.

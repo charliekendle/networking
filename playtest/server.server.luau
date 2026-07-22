@@ -53,6 +53,40 @@ Combat:On("MwPing", function(player, value)
 	Combat:Fire(player, "MwPong", value)
 end)
 
+-- Invoke: client->server request/response, plus error/timeout paths.
+Network.OnInvoke("GetServerInfo", function(player, tag)
+	return `hello {player.Name} ({tag})`, workspace:GetServerTimeNow()
+end)
+Network.OnInvoke("Explode", function()
+	error("intentional invoke handler error")
+end)
+Network.OnInvoke("NeverAnswered", function()
+	task.wait(30) -- deliberately slower than the client's 0.5s timeout
+end)
+
+-- Serialization: client sends a packed inventory blob; unpack and verify.
+Network.On("Snapshot", function(player, blob)
+	local ok, data = pcall(Network.Deserialize, blob)
+	if ok then
+		local inventory = data :: any
+		print(`[PlayTest/Server] Snapshot: {#inventory} items, [1].id={inventory[1].id} ({buffer.len(blob)} bytes on the wire) — SERIALIZER OK`)
+	else
+		warn(`[PlayTest/Server] Snapshot failed to deserialize: {data}`)
+	end
+end)
+
+-- Server->client invoke once the player is in.
+Players.PlayerAdded:Connect(function(player)
+	task.wait(2)
+	Network.InvokeClient(player, "GetClientInfo")
+		:AndThen(function(fps)
+			print(`[PlayTest/Server] InvokeClient reply: client fps ~{fps} — SERVER->CLIENT INVOKE OK`)
+		end)
+		:Catch(function(reason)
+			warn(`[PlayTest/Server] InvokeClient failed: {reason}`)
+		end)
+end)
+
 -- Security: count how much of a 200-packet spam burst actually gets through,
 -- and watch the suspicious-activity hook fire.
 local spamReceived = 0
@@ -64,6 +98,8 @@ Network.On("SpamDone", function(player)
 	local audit = Network.GetAuditLog()
 	print(`[PlayTest/Server] Spam burst: {spamReceived}/200 passed the rate limiter; audit log has {#audit} entries`)
 	print(`[PlayTest/Server] Global middleware observed {packetsSeen} dispatched packets total`)
+	local stats = Network.GetStats()
+	print(`[PlayTest/Server] Stats: sent={stats.Sent} received={stats.Received} dropped={stats.Dropped} rtt={stats.AverageInvokeRtt}`)
 end)
 
 Network.OnSuspiciousActivity:Connect(function(report)

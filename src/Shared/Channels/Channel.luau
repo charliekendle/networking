@@ -32,6 +32,7 @@ local RunService = game:GetService("RunService")
 local Envelope = require(script.Parent.Parent.Core.Envelope)
 local Dispatcher = require(script.Parent.Parent.Core.Dispatcher)
 local Types = require(script.Parent.Parent.Types)
+local Promise = require(script.Parent.Parent.Utilities.Promise)
 
 local IS_SERVER = RunService:IsServer()
 
@@ -55,11 +56,19 @@ export type Channel = {
 	Fire: (self: Channel, ...any) -> (),
 	FireUnreliable: (self: Channel, ...any) -> (),
 
+	-- Request/response. Client: Invoke(event, ...). Server: InvokeClient(player, event, ...).
+	OnInvoke: (self: Channel, eventName: string, handler: (...any) -> ...any) -> (),
+	Invoke: (self: Channel, eventName: string, ...any) -> Promise.Promise,
+	InvokeWithOptions: (self: Channel, options: Types.InvokeOptions, eventName: string, ...any) -> Promise.Promise,
+	InvokeClient: (self: Channel, player: Player, eventName: string, ...any) -> Promise.Promise,
+
 	-- Server-only
 	FireAll: (self: Channel, eventName: string, ...any) -> (),
 	FireAllUnreliable: (self: Channel, eventName: string, ...any) -> (),
 	FireExcept: (self: Channel, excluded: Player | { Player }, eventName: string, ...any) -> (),
 	FireList: (self: Channel, list: { Player }, eventName: string, ...any) -> (),
+	FireNearby: (self: Channel, position: Vector3, radius: number, eventName: string, ...any) -> (),
+	FireWithinRadius: (self: Channel, origin: Player, radius: number, eventName: string, ...any) -> (),
 }
 
 local ChannelClass = {}
@@ -141,6 +150,49 @@ function ChannelClass.FireUnreliable(self: any, ...: any)
 end
 
 --[=[
+	Registers the handler answering `event` invokes on this channel.
+	Server handler: `(player, ...args) -> ...reply`. Client handler:
+	`(...args) -> ...reply`. May yield. One handler per event.
+]=]
+function ChannelClass.OnInvoke(self: any, eventName: string, handler: (...any) -> ...any)
+	Transport.OnInvoke(self.Name, eventName, handler)
+end
+
+--[=[
+	@client
+	Invokes `event` on the server; returns a Promise. Uses config default
+	timeout/retries — see InvokeWithOptions to override.
+
+	```lua
+	Shop:Invoke("GetCatalog", "Weapons"):AndThen(function(items) end)
+	```
+]=]
+function ChannelClass.Invoke(self: any, eventName: string, ...: any): Promise.Promise
+	assert(not IS_SERVER, "Channel:Invoke is client-only; use InvokeClient on the server")
+	return Transport.Invoke(self.Name, eventName, nil, ...)
+end
+
+--[=[
+	@client
+	As Invoke, with explicit `{ Timeout: number?, Retries: number? }`.
+]=]
+function ChannelClass.InvokeWithOptions(self: any, options: Types.InvokeOptions, eventName: string, ...: any): Promise.Promise
+	assert(not IS_SERVER, "Channel:InvokeWithOptions is client-only")
+	return Transport.Invoke(self.Name, eventName, options, ...)
+end
+
+--[=[
+	@server
+	Invokes `event` on one client; returns a Promise. Always bounded by a
+	timeout (default Config.DefaultTimeout) — a client that never answers
+	cannot hang server logic. No retries in this direction.
+]=]
+function ChannelClass.InvokeClient(self: any, player: Player, eventName: string, ...: any): Promise.Promise
+	assert(IS_SERVER, "Channel:InvokeClient is server-only")
+	return Transport.InvokeClient(self.Name, player, eventName, nil, ...)
+end
+
+--[=[
 	@server
 	Reliable fire to every connected player.
 ]=]
@@ -174,6 +226,26 @@ end
 function ChannelClass.FireList(self: any, list: { Player }, eventName: string, ...: any)
 	assert(IS_SERVER, "Channel:FireList is server-only")
 	Transport.FireList(self.Name, list, eventName, ...)
+end
+
+--[=[
+	@server
+	Reliable fire to every player whose character is within `radius` studs
+	of `position`.
+]=]
+function ChannelClass.FireNearby(self: any, position: Vector3, radius: number, eventName: string, ...: any)
+	assert(IS_SERVER, "Channel:FireNearby is server-only")
+	Transport.FireNearby(self.Name, position, radius, eventName, ...)
+end
+
+--[=[
+	@server
+	Reliable fire to every player within `radius` studs of `origin`'s
+	character (origin included).
+]=]
+function ChannelClass.FireWithinRadius(self: any, origin: Player, radius: number, eventName: string, ...: any)
+	assert(IS_SERVER, "Channel:FireWithinRadius is server-only")
+	Transport.FireWithinRadius(self.Name, origin, radius, eventName, ...)
 end
 
 local Channel = {}

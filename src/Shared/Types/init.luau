@@ -104,10 +104,21 @@ export type Packet = {
 }
 
 --[=[
+	@interface InvokeOptions
+	@within Types
+	.Timeout number? -- seconds before the invoke rejects with "InvokeTimeout" (default Config.DefaultTimeout)
+	.Retries number? -- resend attempts after a timeout, client→server only (default Config.DefaultRetries)
+]=]
+export type InvokeOptions = {
+	Timeout: number?,
+	Retries: number?,
+}
+
+--[=[
 	@type ViolationKind "RateLimit" | "Validation" | "Envelope"
 	@within Types
 ]=]
-export type ViolationKind = "RateLimit" | "Validation" | "Envelope"
+export type ViolationKind = "RateLimit" | "Validation" | "Envelope" | "Protocol"
 
 --[=[
 	@interface SecurityReport

@@ -116,11 +116,13 @@ function MiddlewareRegistry.hasAny(channelName: string): boolean
 end
 
 local function runChain(chain: { Entry }, packet: Types.Packet): Types.Packet?
-	-- Iterate over a snapshot index-wise; middleware may disconnect entries
-	-- (including itself) mid-run without corrupting iteration.
-	local index = 1
-	while index <= #chain do
-		local entry = chain[index]
+	-- Snapshot before iterating: middleware may disconnect entries
+	-- (including itself) mid-run; removals take effect from the next packet,
+	-- and the Connected flag still short-circuits entries disconnected
+	-- earlier in this same run.
+	local snapshot = table.clone(chain)
+	for index = 1, #snapshot do
+		local entry = snapshot[index]
 		if entry.Connected then
 			local ok, verdict, replacement = pcall(entry.fn, packet)
 			if not ok then
@@ -148,7 +150,6 @@ local function runChain(chain: { Entry }, packet: Types.Packet): Types.Packet?
 				packet = replacement
 			end
 		end
-		index += 1
 	end
 	return packet
 end

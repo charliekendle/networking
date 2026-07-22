@@ -22,6 +22,8 @@ local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegi
 local MiddlewareRegistry = require(script.Parent.Parent.Shared.Middleware.MiddlewareRegistry)
 local RateLimiter = require(script.Parent.Parent.Shared.Security.RateLimiter)
 local SecurityMonitor = require(script.Parent.Parent.Shared.Security.SecurityMonitor)
+local Promise = require(script.Parent.Parent.Shared.Utilities.Promise)
+local Stats = require(script.Parent.Parent.Shared.Debug.Stats)
 local Types = require(script.Parent.Parent.Shared.Types)
 local Log = require(script.Parent.Parent.Shared.Utilities.Log)
 
@@ -30,8 +32,103 @@ local Transport = {}
 local dispatcher = Dispatcher.new()
 local boundChannels: { [string]: boolean } = {}
 
+-- RPC state -------------------------------------------------------------
+type PendingInvoke = {
+	player: Player,
+	resolve: (...any) -> (),
+	reject: (...any) -> (),
+	timeoutThread: thread,
+}
+
+local invokeHandlers: { [string]: { [string]: (player: Player, ...any) -> ...any } } = {}
+local pendingInvokes: { [number]: PendingInvoke } = {}
+local nextInvokeId = 0
+
 local function isPlayer(value: unknown): boolean
 	return typeof(value) == "Instance" and (value :: Instance):IsA("Player")
+end
+
+local function sendReply(channelName: string, player: Player, id: number, ok: boolean, ...: any)
+	RemoteRegistry.getServer(channelName).Reliable:FireClient(player, "__reply", id, ok, ...)
+end
+
+-- Client -> server invoke request: (__invoke, id, requestName, ...args)
+local function handleInvokeRequest(channelName: string, player: Player, id: unknown, requestName: unknown, ...: any)
+	if type(id) ~= "number" or not Envelope.isValidEventName(requestName) then
+		if Config.Get().SecurityEnabled then
+			SecurityMonitor.reportViolation(player, channelName, nil, "Protocol", "malformed invoke request")
+		end
+		return
+	end
+	local eventName = requestName :: string
+
+	-- Schemas registered via Expect apply to invoke arguments too.
+	local validators = SchemaRegistry.get(channelName, eventName)
+	if validators ~= nil and Config.Get().ValidationEnabled then
+		local ok, reason = SchemaRegistry.check(validators, ...)
+		if not ok then
+			if Config.Get().SecurityEnabled then
+				SecurityMonitor.reportViolation(player, channelName, eventName, "Validation", reason or "invalid invoke arguments")
+			end
+			sendReply(channelName, player, id :: number, false, "Invalid arguments")
+			return
+		end
+	end
+
+	local channelHandlers = invokeHandlers[channelName]
+	local handler = if channelHandlers then channelHandlers[eventName] else nil
+	if handler == nil then
+		sendReply(channelName, player, id :: number, false, `No invoke handler for "{eventName}"`)
+		return
+	end
+
+	if Config.Get().SecurityEnabled then
+		SecurityMonitor.reportSuccess(player)
+	end
+
+	-- Handlers may yield; never block the receive path.
+	task.spawn(function(...)
+		local results = table.pack(pcall(handler, player, ...))
+		if results[1] then
+			sendReply(channelName, player, id :: number, true, table.unpack(results, 2, results.n))
+		else
+			Log.Error("Invoke handler %q/%q errored: %s", channelName, eventName, tostring(results[2]))
+			-- Sanitized: internal error details never leak to the client.
+			sendReply(channelName, player, id :: number, false, "Invoke handler error")
+		end
+	end, ...)
+end
+
+-- Client -> server reply to an InvokeClient: (__reply, id, ok, ...results)
+local function handleReply(channelName: string, player: Player, id: unknown, ok: unknown, ...: any)
+	if type(id) ~= "number" then
+		if Config.Get().SecurityEnabled then
+			SecurityMonitor.reportViolation(player, channelName, nil, "Protocol", "malformed invoke reply")
+		end
+		return
+	end
+
+	local pending = pendingInvokes[id :: number]
+	if pending == nil then
+		-- Late reply after timeout/cancel — normal, ignore quietly.
+		Log.Debug("Ignoring reply for unknown invoke id %d from %s", id :: number, player.Name)
+		return
+	end
+	if pending.player ~= player then
+		-- Someone answering an invoke addressed to another player.
+		if Config.Get().SecurityEnabled then
+			SecurityMonitor.reportViolation(player, channelName, nil, "Protocol", "invoke reply for another player")
+		end
+		return
+	end
+
+	pendingInvokes[id :: number] = nil
+	task.cancel(pending.timeoutThread)
+	if ok == true then
+		pending.resolve(...)
+	else
+		pending.reject(if select("#", ...) > 0 then (...) else "Invoke failed")
+	end
 end
 
 local function onIncoming(channelName: string, kind: Types.PacketKind, player: Player, eventName: unknown, ...: any)
@@ -41,13 +138,25 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, player: P
 	-- 1. Rate limit — cheapest check first, runs before any parsing.
 	if securityOn and config.RateLimit.Enabled then
 		if not RateLimiter.check(player, channelName) then
+			Stats.countDrop(channelName)
 			SecurityMonitor.reportViolation(player, channelName, nil, "RateLimit", "packet rate exceeded")
 			return
 		end
 	end
 
-	-- 2. Envelope — event name must be a sane string.
+	-- 2. Protocol traffic (reserved names) — intercepted before the
+	-- envelope check, which rejects "__" names from user space.
+	if eventName == "__invoke" then
+		handleInvokeRequest(channelName, player, ...)
+		return
+	elseif eventName == "__reply" then
+		handleReply(channelName, player, ...)
+		return
+	end
+
+	-- 3. Envelope — event name must be a sane string.
 	if not Envelope.isValidEventName(eventName) then
+		Stats.countDrop(channelName)
 		if securityOn then
 			SecurityMonitor.reportViolation(player, channelName, nil, "Envelope", "invalid event name")
 		else
@@ -56,11 +165,12 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, player: P
 		return
 	end
 
-	-- 3. Schema validation.
+	-- 4. Schema validation.
 	local validators = SchemaRegistry.get(channelName, eventName :: string)
 	if validators ~= nil and config.ValidationEnabled then
 		local ok, reason = SchemaRegistry.check(validators, ...)
 		if not ok then
+			Stats.countDrop(channelName)
 			if securityOn then
 				SecurityMonitor.reportViolation(
 					player,
@@ -86,7 +196,7 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, player: P
 		SecurityMonitor.reportSuccess(player)
 	end
 
-	-- 4. Middleware (global then channel chain). Packet allocation only
+	-- 5. Middleware (global then channel chain). Packet allocation only
 	-- happens when at least one middleware is registered.
 	if MiddlewareRegistry.hasAny(channelName) then
 		local packet: Types.Packet = {
@@ -100,12 +210,15 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, player: P
 		}
 		local result = MiddlewareRegistry.run(packet)
 		if result == nil then
+			Stats.countDrop(channelName)
 			return
 		end
+		Stats.countReceive(result.Channel, result.Event, result.ArgCount, player.Name)
 		dispatcher:Fire(result.Channel, result.Event, player, table.unpack(result.Args :: any, 1, result.ArgCount))
 		return
 	end
 
+	Stats.countReceive(channelName, eventName :: string, select("#", ...), player.Name)
 	dispatcher:Fire(channelName, eventName :: string, player, ...)
 end
 
@@ -196,6 +309,7 @@ end
 function Transport.Fire(channelName: string, player: Player, eventName: string, ...: any)
 	assert(isPlayer(player), "Fire: first argument must be a Player")
 	Envelope.assertEventName(eventName)
+	Stats.countSend(channelName, eventName, select("#", ...), player.Name)
 	Transport.BindChannel(channelName).Reliable:FireClient(player, eventName, ...)
 end
 
@@ -206,6 +320,7 @@ end
 function Transport.FireUnreliable(channelName: string, player: Player, eventName: string, ...: any)
 	assert(isPlayer(player), "FireUnreliable: first argument must be a Player")
 	Envelope.assertEventName(eventName)
+	Stats.countSend(channelName, eventName, select("#", ...), player.Name)
 	Transport.BindChannel(channelName).Unreliable:FireClient(player, eventName, ...)
 end
 
@@ -214,6 +329,7 @@ end
 ]=]
 function Transport.FireAll(channelName: string, eventName: string, ...: any)
 	Envelope.assertEventName(eventName)
+	Stats.countSend(channelName, eventName, select("#", ...), nil)
 	Transport.BindChannel(channelName).Reliable:FireAllClients(eventName, ...)
 end
 
@@ -222,6 +338,7 @@ end
 ]=]
 function Transport.FireAllUnreliable(channelName: string, eventName: string, ...: any)
 	Envelope.assertEventName(eventName)
+	Stats.countSend(channelName, eventName, select("#", ...), nil)
 	Transport.BindChannel(channelName).Unreliable:FireAllClients(eventName, ...)
 end
 
@@ -250,6 +367,46 @@ function Transport.FireExcept(channelName: string, excluded: Player | { Player }
 	end
 end
 
+local function characterPosition(player: Player): Vector3?
+	local character = player.Character
+	if character == nil then
+		return nil
+	end
+	local root = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
+	return if root and root:IsA("BasePart") then root.Position else nil
+end
+
+--[=[
+	Fires `event` to every player whose character is within `radius` studs
+	of `position` (reliable). Characterless players never receive.
+]=]
+function Transport.FireNearby(channelName: string, position: Vector3, radius: number, eventName: string, ...: any)
+	assert(typeof(position) == "Vector3", "FireNearby: position must be a Vector3")
+	assert(type(radius) == "number" and radius > 0, "FireNearby: radius must be a positive number")
+	Envelope.assertEventName(eventName)
+	local remotes = Transport.BindChannel(channelName)
+
+	for _, player in Players:GetPlayers() do
+		local playerPosition = characterPosition(player)
+		if playerPosition ~= nil and (playerPosition - position).Magnitude <= radius then
+			remotes.Reliable:FireClient(player, eventName, ...)
+		end
+	end
+end
+
+--[=[
+	Fires `event` to every player within `radius` studs of `origin`'s
+	character, including `origin` themselves (reliable).
+]=]
+function Transport.FireWithinRadius(channelName: string, origin: Player, radius: number, eventName: string, ...: any)
+	assert(isPlayer(origin), "FireWithinRadius: origin must be a Player")
+	local position = characterPosition(origin)
+	if position == nil then
+		return
+	end
+	Transport.FireNearby(channelName, position, radius, eventName, ...)
+end
+
 --[=[
 	Fires `event` to every player in `list` (reliable).
 ]=]
@@ -261,6 +418,87 @@ function Transport.FireList(channelName: string, list: { Player }, eventName: st
 		remotes.Reliable:FireClient(player, eventName, ...)
 	end
 end
+
+--[=[
+	Registers the handler answering `event` invokes from clients on this
+	channel. `handler(player, ...args)` returns the reply values; it may
+	yield. One handler per event (duplicate registration errors). Handler
+	errors reply a sanitized "Invoke handler error" and log the real error
+	server-side. Schemas from Expect apply to invoke arguments.
+]=]
+function Transport.OnInvoke(channelName: string, eventName: string, handler: (player: Player, ...any) -> ...any)
+	Envelope.assertEventName(eventName)
+	assert(type(handler) == "function", "OnInvoke expects a function")
+	Transport.BindChannel(channelName)
+
+	local channelHandlers = invokeHandlers[channelName]
+	if channelHandlers == nil then
+		channelHandlers = {}
+		invokeHandlers[channelName] = channelHandlers
+	end
+	assert(channelHandlers[eventName] == nil, `Invoke handler for "{eventName}" already registered on channel "{channelName}"`)
+	channelHandlers[eventName] = handler
+end
+
+--[=[
+	Invokes `event` on one client. Returns a Promise resolving with the
+	client's reply, or rejecting with "InvokeTimeout" after
+	`options.Timeout` (default `Config.DefaultTimeout`) — a client that
+	never answers can't hang server logic. No retries in this direction
+	(the client may already have executed the handler). Cancelling the
+	promise abandons the request.
+]=]
+function Transport.InvokeClient(
+	channelName: string,
+	player: Player,
+	eventName: string,
+	options: Types.InvokeOptions?,
+	...: any
+): Promise.Promise
+	assert(isPlayer(player), "InvokeClient: player expected")
+	Envelope.assertEventName(eventName)
+	local remotes = Transport.BindChannel(channelName)
+	local timeout = (if options then options.Timeout else nil) or Config.Get().DefaultTimeout
+
+	nextInvokeId += 1
+	local id = nextInvokeId
+	local values = table.pack(...)
+	local startedAt = os.clock()
+
+	return Promise.new(function(resolve, reject, onCancel)
+		pendingInvokes[id] = {
+			player = player,
+			resolve = function(...)
+				Stats.recordRtt(os.clock() - startedAt)
+				resolve(...)
+			end,
+			reject = reject,
+			timeoutThread = task.delay(timeout, function()
+				pendingInvokes[id] = nil
+				reject("InvokeTimeout")
+			end),
+		}
+		onCancel(function()
+			local pending = pendingInvokes[id]
+			if pending then
+				pendingInvokes[id] = nil
+				task.cancel(pending.timeoutThread)
+			end
+		end)
+		remotes.Reliable:FireClient(player, "__invoke", id, eventName, table.unpack(values, 1, values.n))
+	end)
+end
+
+-- Reject every pending invoke addressed to a leaving player.
+Players.PlayerRemoving:Connect(function(player: Player)
+	for id, pending in pendingInvokes do
+		if (pending.player :: any) == player then
+			pendingInvokes[id] = nil
+			task.cancel(pending.timeoutThread)
+			pending.reject("PlayerLeft")
+		end
+	end
+end)
 
 assert(RunService:IsServer() or RunService:IsStudio(), "ServerTransport required outside the server")
 

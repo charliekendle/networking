@@ -54,6 +54,14 @@ local ChannelModule = require(script.Shared.Channels.Channel)
 export type Channel = ChannelModule.Channel
 
 local Validators = require(script.Shared.Validation.Validators)
+local Promise = require(script.Shared.Utilities.Promise)
+local Serializer = require(script.Shared.Serialization.Serializer)
+local Compression = require(script.Shared.Compression.Compression)
+local Stats = require(script.Shared.Debug.Stats)
+export type StatsSnapshot = Stats.StatsSnapshot
+export type PacketLogEntry = Stats.PacketLogEntry
+export type Promise = Promise.Promise
+export type InvokeOptions = Types.InvokeOptions
 
 local Network = {}
 
@@ -61,7 +69,7 @@ local Network = {}
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "0.6.0"
+Network.Version = "0.8.1"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -69,6 +77,14 @@ Network.Version = "0.6.0"
 	Exposed so games can reuse the package's signal implementation.
 ]=]
 Network.Signal = Signal
+
+--[=[
+	@prop Promise PromiseConstructor
+	@within Network
+	The package's promise implementation (`Promise.new/resolve/reject/is`),
+	exposed for reuse.
+]=]
+Network.Promise = Promise
 
 --[=[
 	@prop Validators Validators
@@ -144,6 +160,52 @@ Network.OnSuspiciousActivity = (
 function Network.GetAuditLog(): { AuditEntry }
 	assert(IS_SERVER, "GetAuditLog is server-only")
 	return ServerTransport.GetAuditLog()
+end
+
+--[=[
+	Registers the handler answering `event` invokes on the Global channel.
+	Server handler: `(player, ...args) -> ...reply`. Client handler:
+	`(...args) -> ...reply`.
+]=]
+function Network.OnInvoke(eventName: string, handler: (...any) -> ...any)
+	if IS_SERVER then
+		ServerTransport.OnInvoke(GLOBAL_CHANNEL, eventName, handler)
+	else
+		ClientTransport.OnInvoke(GLOBAL_CHANNEL, eventName, handler)
+	end
+end
+
+--[=[
+	@client
+	Invokes `event` on the server (Global channel); returns a Promise.
+
+	```lua
+	Network.Invoke("GetServerTime"):AndThen(function(now) end)
+	local ok, now = Network.Invoke("GetServerTime"):Await()
+	```
+]=]
+function Network.Invoke(eventName: string, ...: any): Promise
+	assert(not IS_SERVER, "Network.Invoke is client-only; use InvokeClient on the server")
+	return ClientTransport.Invoke(GLOBAL_CHANNEL, eventName, nil, ...)
+end
+
+--[=[
+	@client
+	As Invoke, with explicit `{ Timeout: number?, Retries: number? }`.
+]=]
+function Network.InvokeWithOptions(options: InvokeOptions, eventName: string, ...: any): Promise
+	assert(not IS_SERVER, "Network.InvokeWithOptions is client-only")
+	return ClientTransport.Invoke(GLOBAL_CHANNEL, eventName, options, ...)
+end
+
+--[=[
+	@server
+	Invokes `event` on one client (Global channel); returns a Promise
+	bounded by the default timeout.
+]=]
+function Network.InvokeClient(player: Player, eventName: string, ...: any): Promise
+	assert(IS_SERVER, "Network.InvokeClient is server-only")
+	return ServerTransport.InvokeClient(GLOBAL_CHANNEL, player, eventName, nil, ...)
 end
 
 --[=[
@@ -279,6 +341,86 @@ end
 function Network.FireList(list: { Player }, eventName: string, ...: any)
 	assert(IS_SERVER, "FireList is server-only")
 	ServerTransport.FireList(GLOBAL_CHANNEL, list, eventName, ...)
+end
+
+--[=[
+	@server
+	Reliable fire to every player whose character is within `radius` studs
+	of `position`.
+]=]
+function Network.FireNearby(position: Vector3, radius: number, eventName: string, ...: any)
+	assert(IS_SERVER, "FireNearby is server-only")
+	ServerTransport.FireNearby(GLOBAL_CHANNEL, position, radius, eventName, ...)
+end
+
+--[=[
+	@server
+	Reliable fire to every player within `radius` studs of `origin`'s
+	character (origin included).
+]=]
+function Network.FireWithinRadius(origin: Player, radius: number, eventName: string, ...: any)
+	assert(IS_SERVER, "FireWithinRadius is server-only")
+	ServerTransport.FireWithinRadius(GLOBAL_CHANNEL, origin, radius, eventName, ...)
+end
+
+--[=[
+	Packs a value tree (tables, numbers, strings, Vector3/CFrame/Color3/
+	UDim2/EnumItems, buffers...) into one compact buffer — dramatically
+	smaller on the wire than Roblox's generic argument serialization for
+	large payloads. Errors on Instances, functions, and cyclic tables.
+
+	```lua
+	Shop:Fire(player, "Snapshot", Network.Serialize(bigTable))
+	```
+]=]
+function Network.Serialize(value: unknown): buffer
+	return Serializer.serialize(value)
+end
+
+--[=[
+	Reverses Serialize. Errors on corrupt/truncated buffers — wrap in pcall
+	when the buffer came from a remote peer.
+]=]
+function Network.Deserialize(blob: buffer): unknown
+	return Serializer.deserialize(blob)
+end
+
+--[=[
+	LZW-compresses a buffer (or string). 1-byte header; automatically stores
+	raw when compression wouldn't shrink the input, so output is never more
+	than input + 1 byte. Worth it for repetitive payloads ~1 KB and up —
+	typically layered over Serialize:
+
+	```lua
+	Shop:Fire(player, "Snapshot", Network.Compress(Network.Serialize(bigTable)))
+	```
+]=]
+function Network.Compress(input: buffer | string): buffer
+	return Compression.compress(input)
+end
+
+--[=[
+	Reverses Compress. Errors on corrupt input — pcall it for
+	remote-supplied buffers.
+]=]
+function Network.Decompress(input: buffer): buffer
+	return Compression.decompress(input)
+end
+
+--[=[
+	Returns a statistics snapshot for this context: total/per-channel
+	Sent/Received/Dropped counters and the rolling average invoke RTT.
+]=]
+function Network.GetStats(): StatsSnapshot
+	return Stats.getSnapshot()
+end
+
+--[=[
+	Returns the recent packet log (up to 128 entries, oldest first).
+	Only populated while `DebugMode` is on.
+]=]
+function Network.GetPacketLog(): { PacketLogEntry }
+	return Stats.getPacketLog()
 end
 
 Log.Debug("Networking v%s loaded", Network.Version)

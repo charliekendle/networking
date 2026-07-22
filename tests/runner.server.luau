@@ -15,6 +15,10 @@ local ok = TestKit.run({
 	RateLimiter = require(script.Parent["RateLimiter.spec"]) :: TestKit.Spec,
 	SecurityMonitor = require(script.Parent["SecurityMonitor.spec"]) :: TestKit.Spec,
 	Middleware = require(script.Parent["Middleware.spec"]) :: TestKit.Spec,
+	Promise = require(script.Parent["Promise.spec"]) :: TestKit.Spec,
+	Serializer = require(script.Parent["Serializer.spec"]) :: TestKit.Spec,
+	Compression = require(script.Parent["Compression.spec"]) :: TestKit.Spec,
+	Stats = require(script.Parent["Stats.spec"]) :: TestKit.Spec,
 })
 
 if not ok then

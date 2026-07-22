@@ -2,14 +2,14 @@
 
 Production-grade, type-safe networking for Roblox. Channels, middleware, validation, security, and debugging built in — installed with a single Wally dependency.
 
-> **Status: pre-release (0.6.x).** Foundation, transport, channels, validation, security, and middleware are complete. Request/response (Invoke + promises) is next.
+> **Status: pre-release (0.8.x), feature-complete for 1.0.** Transport, channels, validation, security, middleware, request/response (promises), serialization, spatial fire, and debug statistics are all live. Remaining before 1.0: extended docs/examples and API freeze.
 
 ## Installation
 
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@0.6.0"
+Networking = "charliekendle/networking@0.8.0"
 ```
 
 ```lua
@@ -44,7 +44,7 @@ end)
 
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (0.6.0)
+## Live API (0.8.0)
 
 ### Channels
 
@@ -56,6 +56,11 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 | `channel:FireAll/FireAllUnreliable/FireExcept/FireList` | server | Broadcast family, scoped to the channel. |
 | `channel:Expect(event, ...validators)` | both | Positional schema for incoming packets; failures dropped + logged before handlers. Register server-side for security. |
 | `channel:Use(middleware)` | both | Inbound middleware scoped to the channel. |
+| `channel:OnInvoke(event, handler)` | both | Answer invokes. Server handler `(player, ...) -> ...reply`; client `(...) -> ...reply`. May yield. |
+| `channel:Invoke(event, ...)` | client | Request/response; returns a Promise. `InvokeWithOptions({Timeout, Retries}, ...)` to override defaults. |
+| `channel:InvokeClient(player, event, ...)` | server | Invoke a client; always timeout-bounded, never retried. |
+| `channel:FireNearby(position, radius, event, ...)` | server | Fire to players within `radius` studs of a position. |
+| `channel:FireWithinRadius(player, radius, event, ...)` | server | Fire to players near another player (origin included). |
 
 ### Validation
 
@@ -84,6 +89,40 @@ end)
 ```
 
 Middleware that errors (or returns garbage) **drops the packet — fail closed**. A crashed permission check never fails open. Unused middleware costs nothing: the pipeline skips Packet allocation entirely when no chain applies.
+
+### Request/response
+
+```lua
+-- Server
+Shop:OnInvoke("GetCatalog", function(player, category)
+	return CatalogService:GetItems(category) -- may yield
+end)
+
+-- Client
+Shop:Invoke("GetCatalog", "Weapons")
+	:AndThen(function(items) render(items) end)
+	:Catch(function(reason) warn(reason) end)
+
+local ok, items = Shop:Invoke("GetCatalog", "Weapons"):Await()
+```
+
+Rides reserved `__invoke`/`__reply` protocol frames with correlation IDs (never the engine RemoteFunction, so timeouts and cancellation are clean). Rejections: the server's error string, `"InvokeTimeout"`, or `"ChannelNotFound"`. Only timeouts retry (an error reply means the handler already ran); server→client invokes are always timeout-bounded so a silent client can't hang server logic. Server handler errors reach the client as a sanitized `"Invoke handler error"` — real errors log server-side only. `Expect` schemas apply to invoke arguments. `Network.Promise` is exposed for reuse.
+
+### Serialization
+
+```lua
+Shop:Fire(player, "Snapshot", Network.Serialize(bigInventoryTable))
+-- receiving side
+local inventory = Network.Deserialize(blob)
+```
+
+Packs a value tree into one compact buffer: variable-width ints, varint lengths, **interned strings** (repeated dictionary keys cost ~2 bytes after the first), nested tables, Vector3/CFrame/Color3/UDim2/EnumItems, buffers. Dramatically smaller than generic argument serialization for large payloads. Errors on Instances/functions/cycles; deserialize rejects corrupt input (pcall it for remote-supplied buffers).
+
+For repetitive payloads (~1 KB+), layer LZW on top: `Network.Compress(blob)` / `Network.Decompress(blob)`. Automatic raw fallback means output never exceeds input + 1 byte on incompressible data.
+
+### Debugging
+
+`Network.GetStats()` — total and per-channel Sent/Received/Dropped counters plus rolling average invoke RTT. `Network.GetPacketLog()` — last 128 packets (direction, channel, event, arg count, player), recorded only while `DebugMode` is on.
 
 ### Security
 
@@ -164,10 +203,10 @@ Zero thread allocation for non-yielding handlers; a handler that errors never br
 - [x] **Step 4 — Validation**: schema validators (`t`-style), automatic packet rejection
 - [x] **Step 5 — Security**: rate limiting, abuse detection, audit log, suspicious-activity hooks (permissions middleware arrives with Step 6)
 - [x] **Step 6 — Middleware**: global + per-channel chains, transforms, fail-closed error handling
-- [ ] **Step 7 — Request/response**: `Invoke`, promises, timeouts, retries, cancellation
-- [ ] **Step 8 — Serialization & compression**: Roblox datatypes, buffers, optional compression
-- [ ] **Step 9 — Spatial fire**: `FireNearby`, `FireWithinRadius`
-- [ ] **Step 10 — Debugging**: packet inspector, live monitor, statistics
+- [x] **Step 7 — Request/response**: `Invoke`, promises, timeouts, retries, cancellation
+- [x] **Step 8 — Serialization & compression**: value trees → compact buffers (varints, string interning, Roblox datatypes) + LZW with raw fallback
+- [x] **Step 9 — Spatial fire**: `FireNearby`, `FireWithinRadius`
+- [x] **Step 10 — Debugging**: statistics, packet log, invoke RTT tracking
 - [ ] **Step 11 — Docs & examples**: full API reference, tutorials, migration guide
 - [ ] **1.0.0** — API freeze
 

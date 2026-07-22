@@ -51,6 +51,39 @@ Network.Fire("ValidatedPing", 5, "extra") -- extra arg -> rejected
 -- and its Pong must reach ONLY the Combat listener here (value 42 * 2 = 84).
 Combat:Fire("Ping", 42)
 
+-- Invoke demos: happy path, sanitized handler error, missing handler,
+-- and a fast timeout.
+Network.OnInvoke("GetClientInfo", function()
+	return math.floor(1 / game:GetService("RunService").RenderStepped:Wait())
+end)
+
+Network.Invoke("GetServerInfo", "playtest")
+	:AndThen(function(message, serverTime)
+		print(`[PlayTest/Client] Invoke reply: "{message}" at {math.floor(serverTime)} — CLIENT->SERVER INVOKE OK`)
+	end)
+	:Catch(function(reason)
+		warn(`[PlayTest/Client] GetServerInfo failed: {reason}`)
+	end)
+
+Network.Invoke("Explode"):Catch(function(reason)
+	print(`[PlayTest/Client] Explode rejected with "{reason}" — SANITIZED ERROR OK`)
+end)
+
+Network.Invoke("NoSuchHandler"):Catch(function(reason)
+	print(`[PlayTest/Client] NoSuchHandler rejected with "{reason}" — MISSING HANDLER OK`)
+end)
+
+Network.InvokeWithOptions({ Timeout = 0.5 }, "NeverAnswered"):Catch(function(reason)
+	print(`[PlayTest/Client] NeverAnswered rejected with "{reason}" — TIMEOUT OK`)
+end)
+
+-- Serialization: pack 100 inventory rows into one buffer.
+local inventory = {}
+for index = 1, 100 do
+	inventory[index] = { id = index, count = index % 50, rarity = 3 }
+end
+Network.Fire("Snapshot", Network.Serialize(inventory))
+
 -- Security demo LAST (drains the Global bucket): 200-packet burst.
 -- Default limits (60/s + 20 burst) should let ~80 through and drop the rest,
 -- firing SUSPICIOUS lines server-side. Legit traffic above already completed.

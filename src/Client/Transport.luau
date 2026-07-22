@@ -21,6 +21,8 @@ local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
 local MiddlewareRegistry = require(script.Parent.Parent.Shared.Middleware.MiddlewareRegistry)
 local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
 local Types = require(script.Parent.Parent.Shared.Types)
+local Promise = require(script.Parent.Parent.Shared.Utilities.Promise)
+local Stats = require(script.Parent.Parent.Shared.Debug.Stats)
 local Log = require(script.Parent.Parent.Shared.Utilities.Log)
 
 local Transport = {}
@@ -28,8 +30,81 @@ local Transport = {}
 local dispatcher = Dispatcher.new()
 local bindStarted: { [string]: boolean } = {}
 
+-- RPC state -------------------------------------------------------------
+type PendingInvoke = {
+	resolve: (...any) -> (),
+	reject: (...any) -> (),
+	timeoutThread: thread,
+}
+
+local invokeHandlers: { [string]: { [string]: (...any) -> ...any } } = {}
+local pendingInvokes: { [number]: PendingInvoke } = {}
+local nextInvokeId = 0
+
+local function sendReply(remotes: RemoteRegistry.ChannelRemotes, id: number, ok: boolean, ...: any)
+	remotes.Reliable:FireServer("__reply", id, ok, ...)
+end
+
+-- Server -> client invoke request: (__invoke, id, requestName, ...args)
+local function handleInvokeRequest(channelName: string, id: unknown, requestName: unknown, ...: any)
+	if type(id) ~= "number" or not Envelope.isValidEventName(requestName) then
+		Log.Warn("Malformed invoke request from server on channel %q", channelName)
+		return
+	end
+	local eventName = requestName :: string
+
+	local remotes = RemoteRegistry.getClient(channelName, Config.Get().DefaultTimeout)
+	if remotes == nil then
+		return
+	end
+
+	local channelHandlers = invokeHandlers[channelName]
+	local handler = if channelHandlers then channelHandlers[eventName] else nil
+	if handler == nil then
+		sendReply(remotes, id :: number, false, `No invoke handler for "{eventName}"`)
+		return
+	end
+
+	task.spawn(function(...)
+		local results = table.pack(pcall(handler, ...))
+		if results[1] then
+			sendReply(remotes, id :: number, true, table.unpack(results, 2, results.n))
+		else
+			Log.Error("Invoke handler %q/%q errored: %s", channelName, eventName, tostring(results[2]))
+			sendReply(remotes, id :: number, false, "Invoke handler error")
+		end
+	end, ...)
+end
+
+-- Server -> client reply to an Invoke: (__reply, id, ok, ...results)
+local function handleReply(id: unknown, ok: unknown, ...: any)
+	if type(id) ~= "number" then
+		return
+	end
+	local pending = pendingInvokes[id :: number]
+	if pending == nil then
+		return
+	end
+	pendingInvokes[id :: number] = nil
+	task.cancel(pending.timeoutThread)
+	if ok == true then
+		pending.resolve(...)
+	else
+		pending.reject(if select("#", ...) > 0 then (...) else "Invoke failed")
+	end
+end
+
 local function onIncoming(channelName: string, kind: Types.PacketKind, eventName: unknown, ...: any)
+	if eventName == "__invoke" then
+		handleInvokeRequest(channelName, ...)
+		return
+	elseif eventName == "__reply" then
+		handleReply(...)
+		return
+	end
+
 	if not Envelope.isValidEventName(eventName) then
+		Stats.countDrop(channelName)
 		Log.Warn("Dropped packet from server on channel %q: invalid event name", channelName)
 		return
 	end
@@ -38,6 +113,7 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, eventName
 	if validators ~= nil and Config.Get().ValidationEnabled then
 		local ok, reason = SchemaRegistry.check(validators, ...)
 		if not ok then
+			Stats.countDrop(channelName)
 			Log.Warn(
 				"Rejected %q from server on channel %q: %s",
 				eventName :: string,
@@ -60,12 +136,15 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, eventName
 		}
 		local result = MiddlewareRegistry.run(packet)
 		if result == nil then
+			Stats.countDrop(channelName)
 			return
 		end
+		Stats.countReceive(result.Channel, result.Event, result.ArgCount, nil)
 		dispatcher:Fire(result.Channel, result.Event, table.unpack(result.Args :: any, 1, result.ArgCount))
 		return
 	end
 
+	Stats.countReceive(channelName, eventName :: string, select("#", ...), nil)
 	dispatcher:Fire(channelName, eventName :: string, ...)
 end
 
@@ -160,6 +239,7 @@ function Transport.Fire(channelName: string, eventName: string, ...: any)
 	Envelope.assertEventName(eventName)
 	local remotes = resolveRemotes(channelName)
 	if remotes then
+		Stats.countSend(channelName, eventName, select("#", ...), nil)
 		remotes.Reliable:FireServer(eventName, ...)
 	end
 end
@@ -171,8 +251,95 @@ function Transport.FireUnreliable(channelName: string, eventName: string, ...: a
 	Envelope.assertEventName(eventName)
 	local remotes = resolveRemotes(channelName)
 	if remotes then
+		Stats.countSend(channelName, eventName, select("#", ...), nil)
 		remotes.Unreliable:FireServer(eventName, ...)
 	end
+end
+
+--[=[
+	Registers the handler answering `event` invokes from the server on this
+	channel. `handler(...args)` returns the reply values; it may yield. One
+	handler per event.
+]=]
+function Transport.OnInvoke(channelName: string, eventName: string, handler: (...any) -> ...any)
+	Envelope.assertEventName(eventName)
+	assert(type(handler) == "function", "OnInvoke expects a function")
+	Transport.BindChannel(channelName)
+
+	local channelHandlers = invokeHandlers[channelName]
+	if channelHandlers == nil then
+		channelHandlers = {}
+		invokeHandlers[channelName] = channelHandlers
+	end
+	assert(channelHandlers[eventName] == nil, `Invoke handler for "{eventName}" already registered on channel "{channelName}"`)
+	channelHandlers[eventName] = handler
+end
+
+local function invokeOnce(channelName: string, eventName: string, timeout: number, values: { n: number, [number]: any }): Promise.Promise
+	return Promise.new(function(resolve, reject, onCancel)
+		local remotes = resolveRemotes(channelName)
+		if remotes == nil then
+			reject("ChannelNotFound")
+			return
+		end
+
+		nextInvokeId += 1
+		local id = nextInvokeId
+		local startedAt = os.clock()
+
+		pendingInvokes[id] = {
+			resolve = function(...)
+				Stats.recordRtt(os.clock() - startedAt)
+				resolve(...)
+			end,
+			reject = reject,
+			timeoutThread = task.delay(timeout, function()
+				pendingInvokes[id] = nil
+				reject("InvokeTimeout")
+			end),
+		}
+		onCancel(function()
+			local pending = pendingInvokes[id]
+			if pending then
+				pendingInvokes[id] = nil
+				task.cancel(pending.timeoutThread)
+			end
+		end)
+		remotes.Reliable:FireServer("__invoke", id, eventName, table.unpack(values, 1, values.n))
+	end)
+end
+
+--[=[
+	Invokes `event` on the server. Returns a Promise resolving with the
+	server handler's reply, or rejecting with:
+	- the server's error string ("Invalid arguments", "No invoke handler
+	  for ...", "Invoke handler error")
+	- "InvokeTimeout" after `options.Timeout` (default Config.DefaultTimeout)
+	- "ChannelNotFound" if remote discovery failed
+
+	After a timeout, the request is resent up to `options.Retries` times
+	(default Config.DefaultRetries). Only timeouts retry — an error reply
+	means the server already processed the request. Cancelling the promise
+	abandons the request.
+]=]
+function Transport.Invoke(channelName: string, eventName: string, options: Types.InvokeOptions?, ...: any): Promise.Promise
+	Envelope.assertEventName(eventName)
+	local config = Config.Get()
+	local timeout = (if options then options.Timeout else nil) or config.DefaultTimeout
+	local retries = (if options then options.Retries else nil) or config.DefaultRetries
+	local values = table.pack(...)
+
+	local function attempt(remaining: number): Promise.Promise
+		return invokeOnce(channelName, eventName, timeout, values):Catch(function(reason)
+			if reason == "InvokeTimeout" and remaining > 0 then
+				Log.Debug("Invoke %q/%q timed out; retrying (%d left)", channelName, eventName, remaining)
+				return attempt(remaining - 1)
+			end
+			error(reason, 0)
+		end)
+	end
+
+	return attempt(retries)
 end
 
 assert(RunService:IsClient() or RunService:IsStudio(), "ClientTransport required outside the client")
