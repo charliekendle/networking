@@ -146,6 +146,16 @@ Defaults shown. All keys live-tunable via `Network.Configure`; per-key validatio
 
 ---
 
+## Defined events (Schema)
+
+`channel:Define(event, codec) -> EventDef<T>` (also `Network.Define` for Global). The codec is the wire format, the static type, and the validation. Define in a shared module required by both contexts.
+
+**EventDef<T>:** `On`/`Once` (server cb `(player, T)`, client cb `(T)`), `Off`, `Fire` (server `(player, T)`, client `(T)`), `FireUnreliable`, server-only `FireAll`/`FireAllUnreliable`/`FireExcept`. Send-site check errors on out-of-schema values; incoming payloads must be one buffer decoding cleanly or they're dropped + striked. Defined events skip the runtime validator pass.
+
+**`Network.Schema` codecs:** `boolean` (1B) · `u8`/`u16`/`u32`/`i16`/`i32` · `int(min, max)` (minimal width, decode range-checked) · `f32`/`f64` (NaN/±inf rejected both directions) · `str(maxBytes)` · `buf(maxBytes)` · `vec3` (12B) · `vec2` · `cframe` (28B, axis-angle) · `color3` (3B) · `optional(c)` (+1B flag) · `array(c, max?)` · `struct(shape)` (sorted field order, no key names on wire, closed) · `literals(...)` (1B index)
+
+`Schema.encode(codec, value) -> buffer` / `Schema.decode(codec, buffer) -> T` are exposed for manual use; decode errors on any violation.
+
 ## Validation rules
 
 `Expect(event, v1, v2, ...)` registers one validator per positional argument.

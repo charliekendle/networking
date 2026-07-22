@@ -1,6 +1,6 @@
 [package]
 name = "charliekendle/networking"
-version = "1.0.0"
+version = "1.1.0"
 description = "Production-grade, type-safe networking library for Roblox. Channels, middleware, validation, security, and debugging built in."
 license = "MIT"
 authors = ["Charlie Kendle (https://github.com/charliekendle)"]

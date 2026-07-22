@@ -52,6 +52,10 @@ local ClientTransport = if not IS_SERVER then require(script.Client.Transport) :
 
 local ChannelModule = require(script.Shared.Channels.Channel)
 export type Channel = ChannelModule.Channel
+export type EventDef<T> = ChannelModule.EventDef<T>
+
+local Schema = require(script.Shared.Schema.Schema)
+export type Codec<T> = Schema.Codec<T>
 
 local Validators = require(script.Shared.Validation.Validators)
 local Promise = require(script.Shared.Utilities.Promise)
@@ -69,7 +73,7 @@ local Network = {}
 	@prop Version string
 	@within Network
 ]=]
-Network.Version = "1.0.0"
+Network.Version = "1.1.0"
 
 --[=[
 	@prop Signal SignalConstructor
@@ -92,6 +96,14 @@ Network.Promise = Promise
 	Composable runtime validators for use with Expect. See Validators.
 ]=]
 Network.Validators = Validators
+
+--[=[
+	@prop Schema Schema
+	@within Network
+	Typed codecs for `Define`d events — the schema is simultaneously the
+	wire format, the static type, and the validation. See Schema.
+]=]
+Network.Schema = Schema
 
 --[=[
 	@prop ConfigChanged Signal<NetworkConfig>
@@ -160,6 +172,13 @@ Network.OnSuspiciousActivity = (
 function Network.GetAuditLog(): { AuditEntry }
 	assert(IS_SERVER, "GetAuditLog is server-only")
 	return ServerTransport.GetAuditLog()
+end
+
+--[=[
+	Defines a typed event on the Global channel. See `channel:Define`.
+]=]
+function Network.Define<T>(eventName: string, codec: Codec<T>): EventDef<T>
+	return ChannelModule.get(GLOBAL_CHANNEL):Define(eventName, codec)
 end
 
 --[=[

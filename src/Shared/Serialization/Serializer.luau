@@ -31,6 +31,8 @@
 	metatables (ignored), cyclic tables (errors).
 ]=]
 
+local BufferIO = require(script.Parent.BufferIO)
+
 local Serializer = {}
 
 -- Type tags -----------------------------------------------------------------
@@ -52,13 +54,7 @@ local TAG_ENUM = 14 -- enum name string + item value u16
 local TAG_BUFFER = 15
 local TAG_STRINGREF = 16 -- varint index into previously written strings
 
-local INITIAL_CAPACITY = 128
-
-type Writer = {
-	buf: buffer,
-	cursor: number,
-	capacity: number,
-}
+type Writer = BufferIO.Writer
 
 type WriteContext = {
 	seenTables: { [any]: boolean },
@@ -66,65 +62,13 @@ type WriteContext = {
 	stringCount: number,
 }
 
-local function ensure(writer: Writer, bytes: number)
-	local needed = writer.cursor + bytes
-	if needed <= writer.capacity then
-		return
-	end
-	local capacity = writer.capacity
-	while capacity < needed do
-		capacity *= 2
-	end
-	local grown = buffer.create(capacity)
-	buffer.copy(grown, 0, writer.buf, 0, writer.cursor)
-	writer.buf = grown
-	writer.capacity = capacity
-end
-
-local function writeU8(writer: Writer, value: number)
-	ensure(writer, 1)
-	buffer.writeu8(writer.buf, writer.cursor, value)
-	writer.cursor += 1
-end
-
-local function writeU16(writer: Writer, value: number)
-	ensure(writer, 2)
-	buffer.writeu16(writer.buf, writer.cursor, value)
-	writer.cursor += 2
-end
-
--- Unsigned LEB128: 7 bits per byte, high bit = continuation. Lengths,
--- counts, and string references are almost always tiny; this keeps them
--- to one byte instead of four.
-local function writeVarint(writer: Writer, value: number)
-	repeat
-		local byte = value % 128
-		value = (value - byte) / 128
-		if value > 0 then
-			byte += 128
-		end
-		writeU8(writer, byte)
-	until value == 0
-end
-
-local function writeF32(writer: Writer, value: number)
-	ensure(writer, 4)
-	buffer.writef32(writer.buf, writer.cursor, value)
-	writer.cursor += 4
-end
-
-local function writeF64(writer: Writer, value: number)
-	ensure(writer, 8)
-	buffer.writef64(writer.buf, writer.cursor, value)
-	writer.cursor += 8
-end
-
-local function writeRawString(writer: Writer, value: string)
-	writeVarint(writer, #value)
-	ensure(writer, #value)
-	buffer.writestring(writer.buf, writer.cursor, value)
-	writer.cursor += #value
-end
+local ensure = BufferIO.ensure
+local writeU8 = BufferIO.writeU8
+local writeU16 = BufferIO.writeU16
+local writeF32 = BufferIO.writeF32
+local writeF64 = BufferIO.writeF64
+local writeVarint = BufferIO.writeVarint
+local writeRawString = BufferIO.writeRawString
 
 -- Interned: the first occurrence writes TAG_STRING + bytes; repeats write
 -- TAG_STRINGREF + a varint index. Dictionary keys repeated across hundreds
@@ -263,70 +207,24 @@ end
 	Serializes a value tree into a compact buffer.
 ]=]
 function Serializer.serialize(value: unknown): buffer
-	local writer: Writer = {
-		buf = buffer.create(INITIAL_CAPACITY),
-		cursor = 0,
-		capacity = INITIAL_CAPACITY,
-	}
+	local writer: Writer = BufferIO.newWriter(128)
 	writeValue(writer, value, {
 		seenTables = {},
 		stringIndex = {},
 		stringCount = 0,
 	})
-
-	local result = buffer.create(writer.cursor)
-	buffer.copy(result, 0, writer.buf, 0, writer.cursor)
-	return result
+	return BufferIO.finish(writer)
 end
 
 -- Reading ---------------------------------------------------------------
 
-type Reader = {
-	buf: buffer,
-	cursor: number,
-	length: number,
-	strings: { string },
-}
+type Reader = BufferIO.Reader & { strings: { string } }
 
-local function need(reader: Reader, bytes: number)
-	assert(reader.cursor + bytes <= reader.length, "Deserialize: truncated buffer")
-end
-
-local function readU8(reader: Reader): number
-	need(reader, 1)
-	local value = buffer.readu8(reader.buf, reader.cursor)
-	reader.cursor += 1
-	return value
-end
-
-local function readF32(reader: Reader): number
-	need(reader, 4)
-	local value = buffer.readf32(reader.buf, reader.cursor)
-	reader.cursor += 4
-	return value
-end
-
-local function readVarint(reader: Reader): number
-	local result = 0
-	local shift = 1
-	for _ = 1, 8 do
-		local byte = readU8(reader)
-		result += (byte % 128) * shift
-		if byte < 128 then
-			return result
-		end
-		shift *= 128
-	end
-	error("Deserialize: varint too long")
-end
-
-local function readRawString(reader: Reader): string
-	local length = readVarint(reader)
-	need(reader, length)
-	local value = buffer.readstring(reader.buf, reader.cursor, length)
-	reader.cursor += length
-	return value
-end
+local need = BufferIO.need
+local readU8 = BufferIO.readU8
+local readF32 = BufferIO.readF32
+local readVarint = BufferIO.readVarint
+local readRawString = BufferIO.readRawString
 
 local readValue -- forward declaration (recursive)
 
@@ -424,10 +322,11 @@ end
 	corrupt input — wrap in pcall when the buffer came from a remote peer.
 ]=]
 function Serializer.deserialize(blob: buffer): unknown
+	local base = BufferIO.newReader(blob)
 	local reader: Reader = {
-		buf = blob,
-		cursor = 0,
-		length = buffer.len(blob),
+		buf = base.buf,
+		cursor = base.cursor,
+		length = base.length,
 		strings = {},
 	}
 	local value = readValue(reader)

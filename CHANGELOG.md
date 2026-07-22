@@ -3,7 +3,19 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [1.0.0] - Unreleased
+## [1.1.0] - Unreleased
+
+### Added — Defined events (`Network.Schema` + `channel:Define`)
+Addresses the fair criticism that validators were runtime gates only. A Schema codec now does triple duty — wire format, static type, and validation:
+- `Network.Schema` codecs: `boolean`, `u8/u16/u32/i16/i32`, `int(min, max)` (auto-picks minimal width, range-checks tighter than the width on decode), `f32/f64` (NaN/±inf rejected on encode AND decode), `str(max)`, `buf(max)`, `vec3/vec2/cframe/color3`, `optional`, `array(codec, max)`, `struct(shape)` (sorted field order, zero key names on the wire), `literals(...)` (1 byte).
+- `channel:Define(event, codec) -> EventDef<T>` / `Network.Define` — typed handles: `Fire`/`On`/`FireAll`/`FireExcept`/`FireUnreliable` carry the codec's phantom type for real Luau inference. Payload travels as **one schema-packed buffer** (e.g. a Seq+Power+Direction struct is 15 bytes, zero key overhead).
+- Receive path: defined events **skip the runtime validator pass entirely** — decode enforces bounds/finiteness/shape by construction; hostile buffers (truncated, out-of-range, trailing bytes, bad flags) are dropped and striked as Validation violations. Send site errors immediately on out-of-schema values.
+- `BufferIO` extracted as the shared writer/reader for Serializer + Schema (internal refactor, no format change).
+- Specs: Schema (8, incl. hostile-buffer decode rejection), DefinedEvent (4) — 111 tests total. Playtest fires a typed struct end-to-end plus two hostile buffers that must strike.
+
+Define in a shared module required by both contexts so both sides register the codec. `Expect`/loose `Fire` remain unchanged as the untyped tier.
+
+## [1.0.0] - 2026-07-20
 
 ### Added — Step 11 (Docs, examples, benchmarks) & API freeze
 - `docs/api-reference.md` — complete API reference for the 1.0 surface.

@@ -33,6 +33,7 @@ local Envelope = require(script.Parent.Parent.Core.Envelope)
 local Dispatcher = require(script.Parent.Parent.Core.Dispatcher)
 local Types = require(script.Parent.Parent.Types)
 local Promise = require(script.Parent.Parent.Utilities.Promise)
+local Schema = require(script.Parent.Parent.Schema.Schema)
 
 local IS_SERVER = RunService:IsServer()
 
@@ -43,9 +44,36 @@ local Transport: any = if IS_SERVER
 
 export type Connection = Dispatcher.Connection
 
+--[=[
+	@interface EventDef
+	@within Channel
+	Typed handle returned by `channel:Define(event, codec)`. Fire/On carry
+	the codec's phantom type, so payloads are statically checked; on the
+	wire the payload is one schema-packed buffer.
+]=]
+export type EventDef<T> = {
+	Name: string,
+	Channel: string,
+
+	-- Server callback: (player, value). Client callback: (value).
+	On: ((self: EventDef<T>, callback: (player: Player, value: T) -> ()) -> Connection) & ((self: EventDef<T>, callback: (value: T) -> ()) -> Connection),
+	Once: ((self: EventDef<T>, callback: (player: Player, value: T) -> ()) -> Connection) & ((self: EventDef<T>, callback: (value: T) -> ()) -> Connection),
+	Off: (self: EventDef<T>) -> (),
+
+	-- Server: Fire(player, value). Client: Fire(value).
+	Fire: ((self: EventDef<T>, player: Player, value: T) -> ()) & ((self: EventDef<T>, value: T) -> ()),
+	FireUnreliable: ((self: EventDef<T>, player: Player, value: T) -> ()) & ((self: EventDef<T>, value: T) -> ()),
+
+	-- Server-only
+	FireAll: (self: EventDef<T>, value: T) -> (),
+	FireAllUnreliable: (self: EventDef<T>, value: T) -> (),
+	FireExcept: (self: EventDef<T>, excluded: Player | { Player }, value: T) -> (),
+}
+
 export type Channel = {
 	Name: string,
 
+	Define: <T>(self: Channel, eventName: string, codec: Schema.Codec<T>) -> EventDef<T>,
 	Expect: (self: Channel, eventName: string, ...Types.Validator) -> (),
 	Use: (self: Channel, middleware: Types.Middleware) -> Connection,
 	On: (self: Channel, eventName: string, callback: (...any) -> ()) -> Connection,
@@ -71,8 +99,95 @@ export type Channel = {
 	FireWithinRadius: (self: Channel, origin: Player, radius: number, eventName: string, ...any) -> (),
 }
 
+local EventDefClass = {}
+EventDefClass.__index = EventDefClass
+
+local function encodePayload(self: any, value: any): buffer
+	return Schema.encode(self._codec, value)
+end
+
+function EventDefClass.On(self: any, callback: (...any) -> ()): Connection
+	return Transport.On(self.Channel, self.Name, callback)
+end
+
+function EventDefClass.Once(self: any, callback: (...any) -> ()): Connection
+	return Transport.Once(self.Channel, self.Name, callback)
+end
+
+function EventDefClass.Off(self: any)
+	Transport.Off(self.Channel, self.Name)
+end
+
+function EventDefClass.Fire(self: any, ...: any)
+	if IS_SERVER then
+		local player, value = ...
+		Transport.Fire(self.Channel, player, self.Name, encodePayload(self, value))
+	else
+		local value = ...
+		Transport.Fire(self.Channel, self.Name, encodePayload(self, value))
+	end
+end
+
+function EventDefClass.FireUnreliable(self: any, ...: any)
+	if IS_SERVER then
+		local player, value = ...
+		Transport.FireUnreliable(self.Channel, player, self.Name, encodePayload(self, value))
+	else
+		local value = ...
+		Transport.FireUnreliable(self.Channel, self.Name, encodePayload(self, value))
+	end
+end
+
+function EventDefClass.FireAll(self: any, value: any)
+	assert(IS_SERVER, "EventDef:FireAll is server-only")
+	Transport.FireAll(self.Channel, self.Name, encodePayload(self, value))
+end
+
+function EventDefClass.FireAllUnreliable(self: any, value: any)
+	assert(IS_SERVER, "EventDef:FireAllUnreliable is server-only")
+	Transport.FireAllUnreliable(self.Channel, self.Name, encodePayload(self, value))
+end
+
+function EventDefClass.FireExcept(self: any, excluded: Player | { Player }, value: any)
+	assert(IS_SERVER, "EventDef:FireExcept is server-only")
+	Transport.FireExcept(self.Channel, excluded, self.Name, encodePayload(self, value))
+end
+
 local ChannelClass = {}
 ChannelClass.__index = ChannelClass
+
+--[=[
+	Defines a typed event: the Schema codec becomes the wire format, the
+	static type, and the validation in one. Returns an `EventDef<T>` whose
+	Fire/On are fully typed. Define in a **shared module** required by both
+	server and client so both sides register the codec:
+
+	```lua
+	local S = Network.Schema
+	local Attack = Combat:Define("Attack", S.struct({
+		Direction = S.vec3,
+		Power = S.int(0, 100),
+	}))
+
+	Attack:On(function(player, value) end) -- value typed, bounds guaranteed
+	Attack:Fire({ Direction = dir, Power = 55 }) -- client, typed, 1 packed buffer
+	```
+
+	Incoming payloads that don't decode cleanly (wrong size, out-of-range,
+	non-finite, extra bytes) are dropped and striked; defined events skip
+	the runtime validator pass entirely because decode enforces the schema
+	by construction.
+]=]
+function ChannelClass.Define<T>(self: any, eventName: string, codec: Schema.Codec<T>): EventDef<T>
+	Envelope.assertEventName(eventName)
+	Transport.DefineEvent(self.Name, eventName, codec)
+	local def = setmetatable({
+		Name = eventName,
+		Channel = self.Name,
+		_codec = codec,
+	}, EventDefClass)
+	return (def :: any) :: EventDef<T>
+end
 
 --[=[
 	Registers a positional argument schema for incoming `event` packets on

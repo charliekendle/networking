@@ -19,6 +19,8 @@ local Dispatcher = require(script.Parent.Parent.Shared.Core.Dispatcher)
 local Envelope = require(script.Parent.Parent.Shared.Core.Envelope)
 local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
 local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
+local Schema = require(script.Parent.Parent.Shared.Schema.Schema)
+local DefinedRegistry = require(script.Parent.Parent.Shared.Schema.DefinedRegistry)
 local MiddlewareRegistry = require(script.Parent.Parent.Shared.Middleware.MiddlewareRegistry)
 local RateLimiter = require(script.Parent.Parent.Shared.Security.RateLimiter)
 local SecurityMonitor = require(script.Parent.Parent.Shared.Security.SecurityMonitor)
@@ -165,7 +167,68 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, player: P
 		return
 	end
 
-	-- 4. Schema validation.
+	-- 4a. Defined events: the payload must be exactly one buffer that
+	-- decodes cleanly under the registered codec. Decode IS the validation —
+	-- bounds, finiteness, and shape are enforced by construction, so the
+	-- runtime validator pass below is skipped entirely.
+	local codec = DefinedRegistry.get(channelName, eventName :: string)
+	if codec ~= nil then
+		local blob = ...
+		if select("#", ...) ~= 1 or typeof(blob) ~= "buffer" then
+			Stats.countDrop(channelName)
+			if securityOn then
+				SecurityMonitor.reportViolation(
+					player,
+					channelName,
+					eventName :: string,
+					"Validation",
+					"defined event expects a single buffer"
+				)
+			end
+			return
+		end
+		local decoded, value = pcall(Schema.decode, codec, blob :: buffer)
+		if not decoded then
+			Stats.countDrop(channelName)
+			if securityOn then
+				SecurityMonitor.reportViolation(
+					player,
+					channelName,
+					eventName :: string,
+					"Validation",
+					tostring(value)
+				)
+			end
+			return
+		end
+		if securityOn then
+			SecurityMonitor.reportSuccess(player)
+		end
+		if MiddlewareRegistry.hasAny(channelName) then
+			local packet: Types.Packet = {
+				Channel = channelName,
+				Event = eventName :: string,
+				Args = { value },
+				ArgCount = 1,
+				Player = player,
+				Kind = kind,
+				Timestamp = os.clock(),
+			}
+			local result = MiddlewareRegistry.run(packet)
+			if result == nil then
+				Stats.countDrop(channelName)
+				return
+			end
+			Stats.countReceive(result.Channel, result.Event, result.ArgCount, player.Name)
+			dispatcher:Fire(result.Channel, result.Event, player, table.unpack(result.Args :: any, 1, result.ArgCount))
+			return
+		end
+		Stats.countReceive(channelName, eventName :: string, 1, player.Name)
+		dispatcher:Fire(channelName, eventName :: string, player, value)
+		return
+	end
+
+	-- 4b. Schema validation (loose events).
 	local validators = SchemaRegistry.get(channelName, eventName :: string)
 	if validators ~= nil and config.ValidationEnabled then
 		local ok, reason = SchemaRegistry.check(validators, ...)
@@ -278,6 +341,17 @@ Transport.OnSuspiciousActivity = SecurityMonitor.OnSuspiciousActivity
 	oldest first). See SecurityMonitor.
 ]=]
 Transport.GetAuditLog = SecurityMonitor.getAuditLog
+
+--[=[
+	Registers a Schema codec for a defined event. The receive path then
+	requires the payload to be a single buffer decoding cleanly under the
+	codec; failures are dropped and striked. Called by `channel:Define`.
+]=]
+function Transport.DefineEvent(channelName: string, eventName: string, codec: Schema.Codec<any>)
+	Envelope.assertEventName(eventName)
+	DefinedRegistry.set(channelName, eventName, codec)
+	Transport.BindChannel(channelName)
+end
 
 --[=[
 	Registers inbound middleware. `channelName = nil` → global (all

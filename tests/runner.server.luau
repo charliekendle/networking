@@ -18,6 +18,8 @@ local ok = TestKit.run({
 	Promise = require(script.Parent["Promise.spec"]) :: TestKit.Spec,
 	Serializer = require(script.Parent["Serializer.spec"]) :: TestKit.Spec,
 	Compression = require(script.Parent["Compression.spec"]) :: TestKit.Spec,
+	Schema = require(script.Parent["Schema.spec"]) :: TestKit.Spec,
+	DefinedEvent = require(script.Parent["DefinedEvent.spec"]) :: TestKit.Spec,
 	Stats = require(script.Parent["Stats.spec"]) :: TestKit.Spec,
 })
 

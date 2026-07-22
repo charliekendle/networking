@@ -77,6 +77,23 @@ Network.InvokeWithOptions({ Timeout = 0.5 }, "NeverAnswered"):Catch(function(rea
 	print(`[PlayTest/Client] NeverAnswered rejected with "{reason}" — TIMEOUT OK`)
 end)
 
+-- Defined (typed) event: one schema-packed buffer on the wire (15 bytes).
+local S = Network.Schema
+local TypedAttack = Combat:Define("TypedAttack", S.struct({
+	Seq = S.u16,
+	Power = S.int(0, 100),
+	Direction = S.vec3,
+}))
+TypedAttack:Fire({ Seq = 7, Power = 55, Direction = Vector3.new(0, 1, 0) })
+
+-- Exploiter simulation: hostile buffers on the same event, bypassing the
+-- typed handle. Both must be rejected + striked server-side.
+-- (Struct fields pack in sorted order: Direction f32x3, Power u8, Seq u16.)
+local outOfRange = buffer.create(15)
+buffer.writeu8(outOfRange, 12, 200) -- Power = 200, violates int(0, 100)
+Combat:Fire("TypedAttack", outOfRange)
+Combat:Fire("TypedAttack", buffer.create(3)) -- truncated garbage
+
 -- Serialization: pack 100 inventory rows into one buffer.
 local inventory = {}
 for index = 1, 100 do

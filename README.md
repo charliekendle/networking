@@ -9,7 +9,7 @@ Production-grade, type-safe networking for Roblox. Channels, middleware, validat
 ```toml
 # wally.toml
 [dependencies]
-Networking = "charliekendle/networking@1.0.0"
+Networking = "charliekendle/networking@1.1.0"
 ```
 
 ```lua
@@ -42,9 +42,33 @@ Combat:On("Knockback", function(direction)
 end)
 ```
 
+### Typed events (1.1)
+
+For maximum safety and minimum bandwidth, `Define` an event with a Schema — one declaration is simultaneously the **wire format**, the **static type**, and the **validation**:
+
+```lua
+local S = Network.Schema
+
+-- shared module, required by server and client
+local Attack = Combat:Define("Attack", S.struct({
+	Seq = S.u16,
+	Power = S.int(0, 100), -- 1 byte on the wire, range-checked on decode
+	Direction = S.vec3,
+}))
+
+Attack:On(function(player, value)
+	-- value : { Seq: number, Power: number, Direction: Vector3 } — statically typed,
+	-- and a hostile buffer with Power=200 physically cannot decode into here
+end)
+
+Attack:Fire({ Seq = 7, Power = 55, Direction = dir }) -- typed; 15 bytes on the wire
+```
+
+Defined events skip the runtime validator pass entirely (decode enforces the schema by construction) and pack payloads into a single buffer with zero key-name overhead. The untyped `Fire`/`Expect` tier remains for prototyping.
+
 Each channel owns its remotes; event names are scoped per channel ("Ping" on Combat and "Ping" on Trading never interact). `Network.Channel(name)` is memoized — grab it anywhere, no registry module needed. The same `Fire`/`On` family also exists top-level on `Network`, operating on the built-in `Global` channel.
 
-## Live API (1.0.0)
+## Live API (1.1.0)
 
 ### Channels
 
@@ -54,7 +78,8 @@ Each channel owns its remotes; event names are scoped per channel ("Ping" on Com
 | `channel:On/Once/Off` | both | Same semantics as the Global versions below, scoped to the channel. |
 | `channel:Fire/FireUnreliable` | both | Server: `(player, event, ...)`. Client: `(event, ...)`. |
 | `channel:FireAll/FireAllUnreliable/FireExcept/FireList` | server | Broadcast family, scoped to the channel. |
-| `channel:Expect(event, ...validators)` | both | Positional schema for incoming packets; failures dropped + logged before handlers. Register server-side for security. |
+| `channel:Define(event, codec)` | both | Typed event: schema = wire format = type = validation. Returns `EventDef<T>`. Define in shared code. |
+| `channel:Expect(event, ...validators)` | both | Positional schema for incoming packets (untyped tier); failures dropped + logged before handlers. Register server-side for security. |
 | `channel:Use(middleware)` | both | Inbound middleware scoped to the channel. |
 | `channel:OnInvoke(event, handler)` | both | Answer invokes. Server handler `(player, ...) -> ...reply`; client `(...) -> ...reply`. May yield. |
 | `channel:Invoke(event, ...)` | client | Request/response; returns a Promise. `InvokeWithOptions({Timeout, Retries}, ...)` to override defaults. |

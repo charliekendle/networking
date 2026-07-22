@@ -229,3 +229,30 @@ packet, so it records only under DebugMode, into a fixed 128-slot ring.
 **RTT from invokes.** Round-trip time is measured where a round trip
 actually exists — invoke request → reply — over a 64-sample rolling window,
 rather than pretending fire-and-forget packets have measurable latency.
+
+## 1.1 design decisions — defined events
+
+**One declaration, three jobs.** `Expect` validators are runtime gates only:
+they don't shape the wire and don't reach the type system. A `Define`d
+event's codec is the wire format (a `u8` is one byte), the static type
+(`EventDef<T>` handles infer), and the validation (decode bounds-checks
+every read). This is the ByteNet/Zap insight, layered onto this package's
+existing security pipeline rather than replacing it — defined events still
+pass rate limiting, strikes, middleware, and the audit log.
+
+**Decode is the validator.** A value that violates the schema cannot come
+out of `Schema.decode`: integer reads are width-bounded plus explicitly
+range-checked (so `int(0,100)` rejects a raw byte of 200), floats are
+finiteness-checked, strings/arrays length-capped against the schema's own
+limits, structs closed, trailing bytes rejected. The runtime validator walk
+is skipped for defined events because there is nothing left for it to do.
+
+**Struct fields pack in sorted key order.** Deterministic across peers with
+zero key names on the wire — both sides derive the order from the same
+shared definition module. This is also why definitions must live in shared
+code: the codec registration on each side is what makes the bytes mean the
+same thing.
+
+**Send-site check.** `Fire` on a typed handle validates before encoding, so
+a server bug that produces `Power = 999` errors loudly at the call site
+instead of being silently dropped by the peer.

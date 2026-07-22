@@ -20,6 +20,8 @@ local Envelope = require(script.Parent.Parent.Shared.Core.Envelope)
 local RemoteRegistry = require(script.Parent.Parent.Shared.Core.RemoteRegistry)
 local MiddlewareRegistry = require(script.Parent.Parent.Shared.Middleware.MiddlewareRegistry)
 local SchemaRegistry = require(script.Parent.Parent.Shared.Validation.SchemaRegistry)
+local Schema = require(script.Parent.Parent.Shared.Schema.Schema)
+local DefinedRegistry = require(script.Parent.Parent.Shared.Schema.DefinedRegistry)
 local Types = require(script.Parent.Parent.Shared.Types)
 local Promise = require(script.Parent.Parent.Shared.Utilities.Promise)
 local Stats = require(script.Parent.Parent.Shared.Debug.Stats)
@@ -106,6 +108,44 @@ local function onIncoming(channelName: string, kind: Types.PacketKind, eventName
 	if not Envelope.isValidEventName(eventName) then
 		Stats.countDrop(channelName)
 		Log.Warn("Dropped packet from server on channel %q: invalid event name", channelName)
+		return
+	end
+
+	local codec = DefinedRegistry.get(channelName, eventName :: string)
+	if codec ~= nil then
+		local blob = ...
+		if select("#", ...) ~= 1 or typeof(blob) ~= "buffer" then
+			Stats.countDrop(channelName)
+			Log.Warn("Rejected defined event %q from server on channel %q: expected a single buffer", eventName :: string, channelName)
+			return
+		end
+		local decoded, value = pcall(Schema.decode, codec, blob :: buffer)
+		if not decoded then
+			Stats.countDrop(channelName)
+			Log.Warn("Rejected defined event %q from server on channel %q: %s", eventName :: string, channelName, tostring(value))
+			return
+		end
+		if MiddlewareRegistry.hasAny(channelName) then
+			local packet: Types.Packet = {
+				Channel = channelName,
+				Event = eventName :: string,
+				Args = { value },
+				ArgCount = 1,
+				Player = nil,
+				Kind = kind,
+				Timestamp = os.clock(),
+			}
+			local result = MiddlewareRegistry.run(packet)
+			if result == nil then
+				Stats.countDrop(channelName)
+				return
+			end
+			Stats.countReceive(result.Channel, result.Event, result.ArgCount, nil)
+			dispatcher:Fire(result.Channel, result.Event, table.unpack(result.Args :: any, 1, result.ArgCount))
+			return
+		end
+		Stats.countReceive(channelName, eventName :: string, 1, nil)
+		dispatcher:Fire(channelName, eventName :: string, value)
 		return
 	end
 
@@ -211,6 +251,16 @@ end
 ]=]
 function Transport.Off(channelName: string, eventName: string)
 	dispatcher:Off(channelName, eventName)
+end
+
+--[=[
+	Registers a Schema codec for a defined event (server→client direction).
+	Called by `channel:Define`.
+]=]
+function Transport.DefineEvent(channelName: string, eventName: string, codec: Schema.Codec<any>)
+	Envelope.assertEventName(eventName)
+	DefinedRegistry.set(channelName, eventName, codec)
+	Transport.BindChannel(channelName)
 end
 
 --[=[

@@ -64,6 +64,17 @@ Network.OnInvoke("NeverAnswered", function()
 	task.wait(30) -- deliberately slower than the client's 0.5s timeout
 end)
 
+-- Defined (typed) event: schema = wire format = type = validation.
+local S = Network.Schema
+local TypedAttack = Combat:Define("TypedAttack", S.struct({
+	Seq = S.u16,
+	Power = S.int(0, 100),
+	Direction = S.vec3,
+}))
+TypedAttack:On(function(player, value)
+	print(`[PlayTest/Server] TypedAttack seq={value.Seq} power={value.Power} dir={value.Direction} — DEFINED EVENT OK`)
+end)
+
 -- Serialization: client sends a packed inventory blob; unpack and verify.
 Network.On("Snapshot", function(player, blob)
 	local ok, data = pcall(Network.Deserialize, blob)
